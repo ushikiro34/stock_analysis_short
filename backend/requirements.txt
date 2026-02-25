@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+psycopg2-binary
+pandas
+numpy
+websockets
+python-dotenv
+requests
+httpx
+pykrx
+yfinance

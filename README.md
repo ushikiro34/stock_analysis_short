@@ -2,7 +2,7 @@
 
 A professional-grade stock analysis system for **day trading**, with automated signal generation, backtesting, and parameter optimization.
 
-> **최신 업데이트 (2026-02-25)**: Grid Search 파라미터 최적화 및 API 재구조화 완료! ✨
+> **최신 업데이트 (2026-03-02)**: 섹터 모니터링 시스템 추가! 10개 섹터 실시간 분석 및 로테이션 감지 ✨
 
 ---
 
@@ -26,11 +26,17 @@ A professional-grade stock analysis system for **day trading**, with automated s
 - **거래 내역**: 모든 진입/청산 거래 추적 및 분석
 - **전략 비교**: 여러 전략을 동시에 비교 평가
 
-### 4. 🔧 파라미터 최적화 (⭐ NEW)
+### 4. 🔧 파라미터 최적화
 - **Grid Search**: 최적의 매매 파라미터 자동 탐색
 - **빠른 최적화**: 1-3분 내 결과 제공
 - **6가지 지표**: ROI, Sharpe, Sortino, Calmar, Win Rate, Profit Factor
 - **커스텀 범위**: 손절/익절/보유기간/진입점수/포지션 크기 조정 가능
+
+### 5. 📊 섹터 모니터링 (⭐ NEW)
+- **섹터 분석**: 10개 주요 섹터 실시간 강도 평가
+- **섹터 비교**: 전체 섹터 성과 비교 및 순위
+- **로테이션 감지**: 자금 유입/유출 섹터 자동 감지
+- **섹터 신호**: 섹터 내 매매 기회 자동 스캔
 
 ---
 
@@ -74,7 +80,8 @@ stock-analysis-system/
 │   │   │   ├── stocks.py        # 📊 주식 데이터
 │   │   │   ├── signals.py       # 🚦 매매 신호
 │   │   │   ├── backtest.py      # 📈 백테스팅
-│   │   │   └── optimize.py      # 🔧 최적화 (NEW)
+│   │   │   ├── optimize.py      # 🔧 최적화
+│   │   │   └── sectors.py       # 📊 섹터 분석 (NEW)
 │   │   └── schemas/             # 📄 Pydantic 스키마
 │   │
 │   ├── backtest/
@@ -87,6 +94,10 @@ stock-analysis-system/
 │   │   ├── signals.py           # 신호 로직
 │   │   ├── signal_service.py    # 신호 서비스
 │   │   └── score_service.py     # 점수 서비스
+│   │
+│   ├── sectors/
+│   │   ├── sector_config.py     # 섹터 정의 및 종목 매핑
+│   │   └── sector_analyzer.py   # 섹터 분석 엔진
 │   │
 │   ├── kis/                     # 한국투자증권 API
 │   ├── us/                      # 미국 주식 (yfinance)
@@ -129,12 +140,20 @@ POST /backtest/run              - 백테스팅 실행
 POST /backtest/compare          - 전략 비교
 ```
 
-### 🔧 Optimize (최적화) ⭐ NEW
+### 🔧 Optimize (최적화)
 ```
 POST /optimize/grid-search      - 전체 Grid Search
 POST /optimize/quick            - 빠른 최적화
 GET  /optimize/metrics          - 지표 목록
 GET  /optimize/param-ranges     - 파라미터 범위
+```
+
+### 📊 Sectors (섹터 분석) ⭐ NEW
+```
+GET  /sectors/list              - 섹터 목록
+GET  /sectors/{sector}/analyze  - 섹터 분석
+GET  /sectors/compare           - 섹터 비교
+GET  /sectors/{sector}/signals  - 섹터 신호
 ```
 
 📚 **전체 API 문서**: [API_REFERENCE.md](API_REFERENCE.md)
@@ -287,8 +306,17 @@ npm run dev
 - [x] 백테스팅 엔진
 - [x] Grid Search 최적화
 - [x] API 재구조화
+- [x] 섹터 모니터링 시스템 (2026-03-02)
+
+### 🔍 조사 완료 (2026-03-02)
+- [x] **QNCX 누락 원인 분석**: Yahoo Finance 스크리너 API 한계
+  - QNCX: 당일 -0.09% 하락으로 급등주 목록 제외
+  - BNAI, BATL: 급등했으나 API 제한으로 누락
+  - **Yahoo Finance API 한계**: day_gainers (25개) + most_actives (25개) = 최대 ~47개
+  - **해결**: 두 스크리너 합쳐서 최대한 확보 (20개 → 47개)
 
 ### 🚧 향후 계획
+- [ ] 추가 데이터 소스 검토 (Alpha Vantage, Polygon.io 등)
 - [ ] 실시간 알림 (Telegram Bot)
 - [ ] 관심 종목 관리 API
 - [ ] 포트폴리오 추적
@@ -338,6 +366,32 @@ python test_optimizer.py
 
 ---
 
-**버전**: 2.0.0
-**최종 업데이트**: 2026-02-25
+**버전**: 2.1.0
+**최종 업데이트**: 2026-03-02
 **개발자**: Personal Stock Analysis System Team
+
+---
+
+## 📝 변경 이력
+
+### v2.1.0 (2026-03-02)
+- ✨ **섹터 모니터링 시스템 추가**
+  - 10개 주요 섹터 실시간 분석 (기술, 에너지, 헬스케어, 금융 등)
+  - 섹터 강도 평가 (strong/moderate/weak)
+  - 섹터 로테이션 자동 감지 (rotating_in/rotating_out)
+  - 섹터별 매매 신호 생성
+  - 병렬 데이터 수집 및 5분 캐싱
+- 🔍 **QNCX, BNAI, BATL 분석 완료**
+  - 현재 시스템의 예측 능력 검증
+  - 급등주 스크리너 한계 파악
+- ⚡ **급등주 스크리너 개선**
+  - US surge stocks: day_gainers + most_actives 통합 (20개 → 47개)
+  - limit 파라미터 추가 (10~200, 기본값 100)
+  - Yahoo Finance API 한계 분석: 각 스크리너당 최대 25개
+- 🐛 **버그 수정**
+  - VSCode Diagnostics 경고 해결
+  - main.py 미사용 변수/파라미터 정리
+
+### v2.0.0 (2026-02-25)
+- Grid Search 파라미터 최적화
+- API 재구조화

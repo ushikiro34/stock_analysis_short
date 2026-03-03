@@ -1,0 +1,206 @@
+import { useState, useEffect } from 'react';
+import { scanSignals, type EntrySignal, type Market } from '../lib/api';
+import { TrendingUp, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
+
+interface SignalsDashboardProps {
+    market: Market;
+}
+
+export default function SignalsDashboard({ market }: SignalsDashboardProps) {
+    const [signals, setSignals] = useState<EntrySignal[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [strategy, setStrategy] = useState('combined');
+    const [minScore, setMinScore] = useState(60);
+    const [error, setError] = useState<string | null>(null);
+
+    const loadSignals = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await scanSignals(market, strategy, minScore);
+            setSignals(data);
+        } catch (err: any) {
+            setError(err?.message || '신호를 불러올 수 없습니다');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadSignals();
+    }, [market, strategy, minScore]);
+
+    const getSignalColor = (signal: EntrySignal) => {
+        if (signal.signal === 'BUY') {
+            if (signal.strength === 'high') return 'bg-green-500/20 border-green-500 text-green-400';
+            if (signal.strength === 'medium') return 'bg-yellow-500/20 border-yellow-500 text-yellow-400';
+            return 'bg-blue-500/20 border-blue-500 text-blue-400';
+        }
+        return 'bg-slate-700/20 border-slate-600 text-slate-400';
+    };
+
+    const getStrengthBadge = (strength: string) => {
+        const colors = {
+            high: 'bg-green-500 text-white',
+            medium: 'bg-yellow-500 text-black',
+            low: 'bg-slate-500 text-white'
+        };
+        return colors[strength as keyof typeof colors] || colors.low;
+    };
+
+    return (
+        <div className="h-full flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-6">
+                <div>
+                    <h2 className="text-2xl font-bold flex items-center gap-2">
+                        <TrendingUp className="text-green-400" size={28} />
+                        매매 신호
+                    </h2>
+                    <p className="text-slate-400 text-sm mt-1">
+                        급등주에서 자동으로 진입 기회를 탐색합니다
+                    </p>
+                </div>
+                <button
+                    onClick={loadSignals}
+                    disabled={loading}
+                    className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/80 rounded-lg transition-colors disabled:opacity-50"
+                >
+                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                    새로고침
+                </button>
+            </div>
+
+            {/* Controls */}
+            <div className="flex gap-4 mb-6">
+                <div>
+                    <label className="block text-sm text-slate-400 mb-2">전략</label>
+                    <select
+                        value={strategy}
+                        onChange={(e) => setStrategy(e.target.value)}
+                        className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary"
+                    >
+                        <option value="combined">종합 전략</option>
+                        <option value="volume">거래량 기반</option>
+                        <option value="technical">기술적 지표</option>
+                        <option value="pattern">패턴 분석</option>
+                        <option value="rsi_golden_cross">RSI 골든크로스 ⭐</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-sm text-slate-400 mb-2">최소 점수</label>
+                    <select
+                        value={minScore}
+                        onChange={(e) => setMinScore(Number(e.target.value))}
+                        className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary"
+                    >
+                        <option value="50">50점 이상</option>
+                        <option value="60">60점 이상</option>
+                        <option value="70">70점 이상 (추천)</option>
+                        <option value="80">80점 이상</option>
+                    </select>
+                </div>
+            </div>
+
+            {/* Loading */}
+            {loading && (
+                <div className="flex items-center justify-center py-20">
+                    <Loader2 className="animate-spin text-primary mr-3" size={28} />
+                    <span className="text-slate-400">신호 스캔 중...</span>
+                </div>
+            )}
+
+            {/* Error */}
+            {error && !loading && (
+                <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/50 rounded-lg p-4 text-red-400">
+                    <AlertCircle size={20} />
+                    <span>{error}</span>
+                </div>
+            )}
+
+            {/* Signals List */}
+            {!loading && !error && (
+                <div className="flex-1 overflow-y-auto">
+                    {signals.length === 0 ? (
+                        <div className="text-center py-20 text-slate-500">
+                            <p className="text-lg">현재 진입 신호가 없습니다</p>
+                            <p className="text-sm mt-2">최소 점수를 낮춰보세요</p>
+                        </div>
+                    ) : (
+                        <div className="grid gap-4">
+                            {signals.map((signal, idx) => (
+                                <div
+                                    key={idx}
+                                    className={`border rounded-xl p-5 ${getSignalColor(signal)}`}
+                                >
+                                    {/* Header */}
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <h3 className="text-xl font-bold">{signal.code}</h3>
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${getStrengthBadge(signal.strength)}`}>
+                                                    {signal.strength.toUpperCase()}
+                                                </span>
+                                            </div>
+                                            {signal.current_price && (
+                                                <p className="text-2xl font-mono font-bold">
+                                                    {market === 'US' ? '$' : ''}{signal.current_price.toLocaleString()}{market === 'KR' ? '원' : ''}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-3xl font-bold">{signal.score.toFixed(0)}</div>
+                                            <div className="text-xs text-slate-400">점수</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Breakdown */}
+                                    {signal.breakdown && (
+                                        <div className="grid grid-cols-3 gap-3 mb-4">
+                                            {signal.breakdown.volume && (
+                                                <div className="bg-slate-900/30 rounded-lg p-3">
+                                                    <div className="text-xs text-slate-400 mb-1">거래량</div>
+                                                    <div className="text-lg font-bold">{signal.breakdown.volume.score.toFixed(0)}</div>
+                                                </div>
+                                            )}
+                                            {signal.breakdown.technical && (
+                                                <div className="bg-slate-900/30 rounded-lg p-3">
+                                                    <div className="text-xs text-slate-400 mb-1">기술적 지표</div>
+                                                    <div className="text-lg font-bold">{signal.breakdown.technical.score.toFixed(0)}</div>
+                                                </div>
+                                            )}
+                                            {signal.breakdown.pattern && (
+                                                <div className="bg-slate-900/30 rounded-lg p-3">
+                                                    <div className="text-xs text-slate-400 mb-1">패턴</div>
+                                                    <div className="text-lg font-bold">{signal.breakdown.pattern.score.toFixed(0)}</div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Reasons */}
+                                    <div>
+                                        <div className="text-xs text-slate-400 mb-2 font-semibold">신호 발생 이유:</div>
+                                        <ul className="space-y-1">
+                                            {signal.reasons.map((reason, i) => (
+                                                <li key={i} className="text-sm flex items-start gap-2">
+                                                    <span className="text-green-400 mt-0.5">▸</span>
+                                                    <span>{reason}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+
+                                    {/* Timestamp */}
+                                    <div className="mt-4 pt-3 border-t border-slate-700/50 text-xs text-slate-500">
+                                        {new Date(signal.timestamp).toLocaleString('ko-KR')}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}

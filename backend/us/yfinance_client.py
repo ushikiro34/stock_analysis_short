@@ -19,19 +19,34 @@ async def _run_sync(fn):
     return await loop.run_in_executor(None, fn)
 
 
-async def get_us_surge_stocks(limit: int = 20) -> list[dict]:
-    """Yahoo Finance Screener로 미국 급등주 (day_gainers) 조회"""
+async def get_us_surge_stocks(limit: int = 100) -> list[dict]:
+    """
+    Yahoo Finance Screener로 미국 급등주 조회
+    - day_gainers (상승률 높은 종목)
+    - most_actives (거래량 많은 종목)
+    두 스크리너를 합쳐서 중복 제거 후 반환
+    """
     def _fetch():
         try:
             from yfinance.screener.screener import screen
-            result = screen("day_gainers")
-            quotes = result.get("quotes", [])
+            # day_gainers와 most_actives 모두 조회
+            gainers = screen("day_gainers").get("quotes", [])
+            actives = screen("most_actives").get("quotes", [])
+            logger.info(f"Fetched {len(gainers)} gainers, {len(actives)} actives")
         except Exception as e:
             logger.warning(f"yf.screener.screen failed: {e}")
-            quotes = []
+            gainers = []
+            actives = []
+
+        # 중복 제거 (symbol 기준으로 dict 사용)
+        all_quotes = {}
+        for q in gainers + actives:
+            symbol = q.get("symbol", "")
+            if symbol and symbol not in all_quotes:
+                all_quotes[symbol] = q
 
         stocks = []
-        for q in quotes[:limit]:
+        for q in all_quotes.values():
             symbol = q.get("symbol", "")
             price = q.get("regularMarketPrice", 0) or 0
             change = q.get("regularMarketChange", 0) or 0
@@ -50,7 +65,12 @@ async def get_us_surge_stocks(limit: int = 20) -> list[dict]:
                 "volume": int(vol),
                 "change_price": round(float(change), 2),
             })
-        return stocks
+
+        # 상승률 높은 순으로 정렬
+        stocks.sort(key=lambda x: abs(x["change_rate"]), reverse=True)
+
+        logger.info(f"Total unique surge stocks: {len(stocks)}, returning top {limit}")
+        return stocks[:limit]
 
     return await _run_sync(_fetch)
 

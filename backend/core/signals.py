@@ -224,6 +224,184 @@ class TechnicalBreakoutSignal:
         }
 
 
+class RSIGoldenCrossSignal:
+    """RSI 30 돌파 + MA50/200 골든크로스 진입 신호"""
+
+    def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
+        """
+        RSI 30 돌파 + 골든크로스 신호 체크
+
+        조건:
+        1. RSI가 30을 상향 돌파 (최근 5일 이내)
+        2. MA50 > MA200 (골든크로스 상태)
+        3. 거래량 증가 (평균 대비 1.2배 이상)
+
+        점수 배분:
+        - 골든크로스 유지: +40
+        - RSI 30 돌파: +30
+        - 거래량 급증: +20
+        - MA50 상승 추세: +10
+        - BUY 신호: 70점 이상
+
+        Args:
+            ohlcv_data: OHLCV 데이터 (최소 200일 이상 권장)
+
+        Returns:
+            {
+                "signal": "BUY" | "HOLD",
+                "strength": "high" | "medium" | "low",
+                "score": 0-100,
+                "reasons": [...]
+            }
+        """
+        if len(ohlcv_data) < 200:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": ["데이터 부족 (최소 200일 필요)"]
+            }
+
+        closes = ohlcv_data["Close"]
+        volumes = ohlcv_data["Volume"]
+
+        current_price = closes.iloc[-1]
+        current_volume = volumes.iloc[-1]
+
+        reasons = []
+        score = 0
+
+        # 1. MA50, MA200 계산
+        ma50 = IndicatorEngine.calculate_ma(closes, 50)
+        ma200 = IndicatorEngine.calculate_ma(closes, 200)
+
+        if len(ma50) == 0 or len(ma200) == 0:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": ["이동평균 계산 실패"]
+            }
+
+        current_ma50 = ma50.iloc[-1]
+        current_ma200 = ma200.iloc[-1]
+
+        # 조건 1: 골든크로스 확인 (MA50 > MA200)
+        if current_ma50 > current_ma200:
+            golden_cross_pct = (current_ma50 - current_ma200) / current_ma200 * 100
+            reasons.append(f"골든크로스 유지 (MA50 > MA200, +{golden_cross_pct:.2f}%)")
+            score += 40
+
+            # 골든크로스 발생 시점 확인 (최근 20일 이내)
+            if len(ma50) > 20 and len(ma200) > 20:
+                recent_golden_cross = False
+                for i in range(1, min(21, len(ma50))):
+                    if ma50.iloc[-i] > ma200.iloc[-i] and ma50.iloc[-i-1] <= ma200.iloc[-i-1]:
+                        reasons.append(f"최근 골든크로스 발생 ({i}일 전)")
+                        score += 10
+                        recent_golden_cross = True
+                        break
+        else:
+            reasons.append("골든크로스 미발생 (MA50 < MA200)")
+            # 골든크로스가 없으면 신호 약함
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": score,
+                "reasons": reasons
+            }
+
+        # 2. RSI 30 돌파 확인
+        rsi = IndicatorEngine.calculate_rsi(closes, 14)
+
+        if len(rsi) < 5:
+            reasons.append("RSI 데이터 부족")
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": score,
+                "reasons": reasons
+            }
+
+        current_rsi = rsi.iloc[-1]
+
+        # RSI가 30을 상향 돌파했는지 확인 (최근 5일 이내)
+        rsi_breakout = False
+        rsi_breakout_days = 0
+
+        for i in range(1, min(6, len(rsi))):
+            prev_rsi = rsi.iloc[-i]
+            prev_prev_rsi = rsi.iloc[-i-1] if len(rsi) > i+1 else None
+
+            # RSI가 30 아래에서 30 위로 돌파
+            if prev_prev_rsi is not None and prev_prev_rsi <= 30 and prev_rsi > 30:
+                rsi_breakout = True
+                rsi_breakout_days = i
+                reasons.append(f"RSI 30 상향 돌파 ({i}일 전, 현재 RSI: {current_rsi:.1f})")
+                score += 30
+                break
+
+        if not rsi_breakout:
+            # RSI가 현재 30~50 사이에 있으면 부분 점수
+            if 30 < current_rsi < 50:
+                reasons.append(f"RSI 과매도 탈출 구간 (RSI: {current_rsi:.1f})")
+                score += 15
+            elif current_rsi >= 50:
+                reasons.append(f"RSI 정상 범위 (RSI: {current_rsi:.1f})")
+                score += 5
+            else:
+                reasons.append(f"RSI 과매도 구간 (RSI: {current_rsi:.1f})")
+
+        # 3. 거래량 증가 확인
+        volume_ma20 = volumes.tail(20).mean()
+        volume_ratio = current_volume / volume_ma20 if volume_ma20 > 0 else 0
+
+        if volume_ratio >= 2.0:
+            reasons.append(f"거래량 급증 ({volume_ratio:.2f}배)")
+            score += 20
+        elif volume_ratio >= 1.2:
+            reasons.append(f"거래량 증가 ({volume_ratio:.2f}배)")
+            score += 10
+        else:
+            reasons.append(f"거래량 보통 ({volume_ratio:.2f}배)")
+
+        # 4. MA50 상승 추세 확인
+        if len(ma50) > 5:
+            ma50_5days_ago = ma50.iloc[-6]
+            if current_ma50 > ma50_5days_ago:
+                ma50_trend = (current_ma50 - ma50_5days_ago) / ma50_5days_ago * 100
+                reasons.append(f"MA50 상승 추세 (+{ma50_trend:.2f}% 5일)")
+                score += 10
+
+        # 5. 현재 가격 위치 확인
+        if current_price > current_ma50:
+            price_above_ma50 = (current_price - current_ma50) / current_ma50 * 100
+            reasons.append(f"가격 MA50 상단 (+{price_above_ma50:.2f}%)")
+            score += 5
+
+        # 신호 강도 결정
+        if score >= 70:
+            strength = SignalStrength.HIGH
+            signal_type = SignalType.BUY
+        elif score >= 50:
+            strength = SignalStrength.MEDIUM
+            signal_type = SignalType.BUY
+        else:
+            strength = SignalStrength.LOW
+            signal_type = SignalType.HOLD
+
+        return {
+            "signal": signal_type,
+            "strength": strength,
+            "score": score,
+            "reasons": reasons,
+            "rsi": current_rsi,
+            "ma50": current_ma50,
+            "ma200": current_ma200,
+            "volume_ratio": volume_ratio
+        }
+
+
 class PricePatternSignal:
     """가격 패턴 진입 신호"""
 
@@ -241,6 +419,152 @@ class PricePatternSignal:
         second_low = second_half.min()
 
         return second_low > first_low
+
+    def detect_pullback(self, ohlcv_data: pd.DataFrame) -> Dict:
+        """
+        눌림목(Pullback) 패턴 감지
+
+        조건:
+        1. 상승 추세 확인 (MA20 > MA60)
+        2. 일시적 조정 (최근 2일~10일 하락, 최대 2주)
+        3. 지지선 터치 (20일선 ±3% 이내)
+        4. 거래량 감소 (조정 기간 평균 거래량 < 이전 평균)
+        5. 반등 신호 (당일 양봉 + 거래량 증가)
+
+        Returns:
+            {
+                "is_pullback": bool,
+                "score": int,
+                "reasons": list,
+                "is_reversal_risk": bool  # 추세전환 위험 여부
+            }
+        """
+        if len(ohlcv_data) < 60:
+            return {"is_pullback": False, "score": 0, "reasons": [], "is_reversal_risk": False}
+
+        closes = ohlcv_data["Close"]
+        volumes = ohlcv_data["Volume"]
+        highs = ohlcv_data["High"]
+        lows = ohlcv_data["Low"]
+
+        current = ohlcv_data.iloc[-1]
+        current_price = current["Close"]
+        current_volume = current["Volume"]
+
+        reasons = []
+        score = 0
+        is_reversal_risk = False
+
+        # 1. 상승 추세 확인
+        ma20 = IndicatorEngine.calculate_ma(closes, 20)
+        ma60 = IndicatorEngine.calculate_ma(closes, 60)
+
+        if len(ma20) == 0 or len(ma60) == 0:
+            return {"is_pullback": False, "score": 0, "reasons": [], "is_reversal_risk": False}
+
+        current_ma20 = ma20.iloc[-1]
+        current_ma60 = ma60.iloc[-1]
+
+        if current_ma20 <= current_ma60:
+            # 추세전환 위험: MA20이 MA60 아래로
+            is_reversal_risk = True
+            return {"is_pullback": False, "score": 0, "reasons": ["MA20 < MA60: 추세전환 위험"], "is_reversal_risk": True}
+
+        reasons.append("상승 추세 유지 (MA20 > MA60)")
+        score += 20
+
+        # 2. 조정 기간 감지 (2일 ~ 10일, 최대 2주)
+        adjustment_detected = False
+        adjustment_days = 0
+
+        for lookback in range(2, 11):  # 2일 ~ 10일
+            if len(closes) < lookback + 1:
+                continue
+
+            recent_closes = closes.tail(lookback + 1)
+            declining_days = 0
+
+            for i in range(1, len(recent_closes)):
+                if recent_closes.iloc[i] < recent_closes.iloc[i-1]:
+                    declining_days += 1
+
+            # 기간 중 60% 이상 하락일
+            if declining_days >= lookback * 0.6:
+                adjustment_detected = True
+                adjustment_days = lookback
+                break
+
+        if not adjustment_detected:
+            return {"is_pullback": False, "score": 0, "reasons": ["조정 패턴 없음"], "is_reversal_risk": False}
+
+        reasons.append(f"{adjustment_days}일 조정 기간 감지")
+        score += 15
+
+        # 3. 지지선 터치 확인 (20일선 ±3% 이내)
+        distance_from_ma20 = abs(current_price - current_ma20) / current_ma20
+
+        if distance_from_ma20 > 0.03:
+            # 지지선에서 멀리 떨어짐
+            if current_price < current_ma20 * 0.95:
+                # MA20을 5% 이상 이탈 -> 추세전환 위험
+                is_reversal_risk = True
+                return {"is_pullback": False, "score": 0, "reasons": ["MA20 5% 이상 이탈: 추세전환 위험"], "is_reversal_risk": True}
+            return {"is_pullback": False, "score": 0, "reasons": ["지지선 터치 없음"], "is_reversal_risk": False}
+
+        reasons.append(f"MA20 지지선 터치 (거리: {distance_from_ma20*100:.1f}%)")
+        score += 25
+
+        # 4. 조정 기간 거래량 감소 확인
+        adjustment_period = ohlcv_data.tail(adjustment_days + 1).head(adjustment_days)
+        before_period = ohlcv_data.tail(adjustment_days * 2 + 1).head(adjustment_days)
+
+        adjustment_avg_volume = adjustment_period["Volume"].mean()
+        before_avg_volume = before_period["Volume"].mean()
+
+        if adjustment_avg_volume < before_avg_volume:
+            reasons.append(f"조정 기간 거래량 감소 ({adjustment_avg_volume/before_avg_volume:.2f}배)")
+            score += 20
+
+        # 5. 반등 신호 확인
+        prev_close = closes.iloc[-2]
+        is_bullish_candle = current_price > ohlcv_data.iloc[-1]["Open"]
+
+        if is_bullish_candle:
+            reasons.append("당일 양봉")
+            score += 10
+
+        # 거래량 증가
+        prev_volume = volumes.iloc[-2]
+        if current_volume > prev_volume:
+            reasons.append(f"거래량 증가 ({current_volume/prev_volume:.2f}배)")
+            score += 15
+
+        # 6. 추세전환 위험 추가 체크
+        # - 이전 저점 하회 시
+        recent_period = ohlcv_data.tail(20)
+        prev_low = recent_period["Low"].iloc[:-1].min()
+
+        if current_price < prev_low:
+            is_reversal_risk = True
+            reasons.append("⚠️ 이전 저점 하회: 추세전환 위험")
+
+        # - RSI 과매도 구간 (30 미만)
+        rsi = IndicatorEngine.calculate_rsi(closes, 14)
+        if len(rsi) > 0:
+            current_rsi = rsi.iloc[-1]
+            if current_rsi < 30:
+                is_reversal_risk = True
+                reasons.append(f"⚠️ RSI 과매도 ({current_rsi:.1f}): 추세전환 위험")
+
+        is_pullback = score >= 60 and not is_reversal_risk
+
+        return {
+            "is_pullback": is_pullback,
+            "score": score,
+            "reasons": reasons,
+            "is_reversal_risk": is_reversal_risk,
+            "adjustment_days": adjustment_days
+        }
 
     def detect_consolidation_breakout(self, ohlcv_data: pd.DataFrame, consolidation_days: int = 5) -> bool:
         """횡보 후 돌파 패턴 감지"""
@@ -266,27 +590,46 @@ class PricePatternSignal:
         return breakout
 
     def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
-        """가격 패턴 신호 체크"""
+        """가격 패턴 신호 체크 (눌림목 포함)"""
         if len(ohlcv_data) < 15:
             return {"signal": SignalType.HOLD, "strength": SignalStrength.LOW, "score": 0, "reasons": []}
 
         closes = ohlcv_data["Close"]
         reasons = []
         score = 0
+        pullback_info = None
 
-        # 패턴 1: 저점 높이기
+        # 패턴 1: 눌림목 (Pullback) ⭐ 우선 순위
+        pullback_result = self.detect_pullback(ohlcv_data)
+
+        if pullback_result["is_reversal_risk"]:
+            # 추세전환 위험이 있으면 HOLD 신호
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": pullback_result["reasons"],
+                "pullback": pullback_result
+            }
+
+        if pullback_result["is_pullback"]:
+            reasons.extend(["🎯 눌림목 패턴"] + pullback_result["reasons"])
+            score += pullback_result["score"]
+            pullback_info = pullback_result
+
+        # 패턴 2: 저점 높이기
         higher_lows = self.detect_higher_lows(closes, 5)
         if higher_lows:
             reasons.append("저점 높이기 패턴")
             score += 30
 
-        # 패턴 2: 횡보 후 돌파
+        # 패턴 3: 횡보 후 돌파
         consolidation_breakout = self.detect_consolidation_breakout(ohlcv_data, 5)
         if consolidation_breakout:
             reasons.append("횡보 후 돌파")
             score += 40
 
-        # 패턴 3: 상승 추세 (20일 수익률 > 0)
+        # 패턴 4: 상승 추세 (20일 수익률 > 0)
         if len(closes) >= 20:
             returns_20d = (closes.iloc[-1] - closes.iloc[-20]) / closes.iloc[-20]
             if returns_20d > 0:
@@ -294,22 +637,28 @@ class PricePatternSignal:
                 score += 15
 
         # 신호 강도 결정
-        if score >= 60:
+        if score >= 70:
             strength = SignalStrength.HIGH
             signal_type = SignalType.BUY
-        elif score >= 40:
+        elif score >= 50:
             strength = SignalStrength.MEDIUM
             signal_type = SignalType.BUY
         else:
             strength = SignalStrength.LOW
             signal_type = SignalType.HOLD
 
-        return {
+        result = {
             "signal": signal_type,
             "strength": strength,
             "score": score,
             "reasons": reasons
         }
+
+        # 눌림목 정보 추가
+        if pullback_info:
+            result["pullback"] = pullback_info
+
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -482,6 +831,7 @@ class SignalManager:
         self.volume_signal = VolumeBreakoutSignal()
         self.technical_signal = TechnicalBreakoutSignal()
         self.pattern_signal = PricePatternSignal()
+        self.rsi_golden_cross_signal = RSIGoldenCrossSignal()
 
     def generate_entry_signal(self, ohlcv_data: pd.DataFrame, strategy: str = "combined") -> Dict:
         """
@@ -489,7 +839,7 @@ class SignalManager:
 
         Args:
             ohlcv_data: OHLCV 데이터
-            strategy: "volume" | "technical" | "pattern" | "combined"
+            strategy: "volume" | "technical" | "pattern" | "rsi_golden_cross" | "combined"
 
         Returns:
             종합 신호 정보
@@ -500,6 +850,8 @@ class SignalManager:
             return self.technical_signal.check_signal(ohlcv_data)
         elif strategy == "pattern":
             return self.pattern_signal.check_signal(ohlcv_data)
+        elif strategy == "rsi_golden_cross":
+            return self.rsi_golden_cross_signal.check_signal(ohlcv_data)
         else:  # combined
             volume_result = self.volume_signal.check_signal(ohlcv_data)
             technical_result = self.technical_signal.check_signal(ohlcv_data)

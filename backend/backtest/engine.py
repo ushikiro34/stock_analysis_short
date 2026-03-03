@@ -412,7 +412,7 @@ async def run_simple_backtest(
     config: Optional[BacktestConfig] = None
 ) -> Dict:
     """
-    간편 백테스팅 실행
+    간편 백테스팅 실행 - 병렬 데이터 로딩으로 최적화
 
     Args:
         symbols: 종목 코드 리스트
@@ -424,22 +424,39 @@ async def run_simple_backtest(
     Returns:
         백테스팅 결과
     """
+    import asyncio
     from ..core.signal_service import collect_ohlcv_data
 
     config = config or BacktestConfig()
     backtester = Backtester(config)
 
-    logger.info(f"[BT] Loading historical data for {len(symbols)} symbols...")
+    logger.info(f"[BT] Loading historical data for {len(symbols)} symbols in parallel...")
 
-    # 각 종목별로 데이터 로드 및 시뮬레이션
-    for code in symbols:
-        # OHLCV 데이터 로드
-        days = (end_date - start_date).days + 30  # 여유있게
-        ohlcv_data = await collect_ohlcv_data(code, market, days)
+    # 병렬로 모든 종목의 데이터 로드
+    days = (end_date - start_date).days + 30  # 여유있게
 
-        if ohlcv_data.empty:
-            logger.warning(f"[BT] No data for {code}, skipping...")
-            continue
+    async def load_data(code: str):
+        try:
+            data = await collect_ohlcv_data(code, market, days)
+            if data.empty:
+                logger.warning(f"[BT] No data for {code}")
+                return code, None
+            return code, data
+        except Exception as e:
+            logger.error(f"[BT] Failed to load {code}: {e}")
+            return code, None
+
+    # 모든 데이터를 병렬로 로드
+    load_tasks = [load_data(code) for code in symbols]
+    loaded_data = await asyncio.gather(*load_tasks)
+
+    # 데이터를 딕셔너리로 변환
+    symbol_data = {code: data for code, data in loaded_data if data is not None}
+
+    logger.info(f"[BT] Loaded {len(symbol_data)}/{len(symbols)} symbols successfully")
+
+    # 각 종목별로 시뮬레이션
+    for code, ohlcv_data in symbol_data.items():
 
         # 날짜 필터링 (timezone-aware 처리)
         ohlcv_data.index = pd.to_datetime(ohlcv_data.index)

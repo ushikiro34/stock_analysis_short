@@ -1,5 +1,5 @@
-import React from 'react';
-import { TrendingUp, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { TrendingUp, Loader2, Search } from 'lucide-react';
 import type { SurgeStock, Market } from '../lib/api';
 
 interface SurgeListProps {
@@ -10,11 +10,21 @@ interface SurgeListProps {
     market: Market;
 }
 
-const SurgeList: React.FC<SurgeListProps> = ({ stocks, selectedCode, onSelect, loading, market }) => {
+export default function SurgeList({ stocks, selectedCode, onSelect, loading, market }: SurgeListProps) {
+    const [manualCode, setManualCode] = useState('');
+
     const formatVolume = (v: number) => {
         if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
         if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
         return String(v);
+    };
+
+    const handleManualSearch = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (manualCode.trim()) {
+            onSelect(manualCode.trim().toUpperCase());
+            setManualCode('');
+        }
     };
 
     return (
@@ -28,6 +38,20 @@ const SurgeList: React.FC<SurgeListProps> = ({ stocks, selectedCode, onSelect, l
                     {market === 'US' ? 'US Stocks' : '2만원 미만'}
                 </span>
             </div>
+
+            {/* Manual Stock Code Input */}
+            <form onSubmit={handleManualSearch} className="mb-3 px-1">
+                <div className="relative">
+                    <input
+                        type="text"
+                        value={manualCode}
+                        onChange={(e) => setManualCode(e.target.value)}
+                        placeholder={market === 'US' ? 'Enter code (e.g. TPET)' : '종목코드 입력'}
+                        className="w-full px-3 py-2 pl-9 bg-slate-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-primary text-slate-200 placeholder-slate-500"
+                    />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                </div>
+            </form>
 
             {loading && stocks.length === 0 ? (
                 <div className="flex items-center justify-center py-12">
@@ -79,6 +103,4 @@ const SurgeList: React.FC<SurgeListProps> = ({ stocks, selectedCode, onSelect, l
             )}
         </div>
     );
-};
-
-export default SurgeList;
+}

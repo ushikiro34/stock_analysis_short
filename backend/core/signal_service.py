@@ -94,7 +94,7 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
     Args:
         code: 종목 코드
         market: "KR" | "US"
-        strategy: "volume" | "technical" | "pattern" | "combined"
+        strategy: "volume" | "technical" | "pattern" | "rsi_golden_cross" | "combined"
 
     Returns:
         {
@@ -106,8 +106,11 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
             "timestamp": 생성 시각
         }
     """
+    # RSI Golden Cross 전략은 200일 데이터 필요
+    days = 250 if strategy == "rsi_golden_cross" else 120
+
     # OHLCV 데이터 수집
-    ohlcv_data = await collect_ohlcv_data(code, market, days=120)
+    ohlcv_data = await collect_ohlcv_data(code, market, days=days)
 
     if ohlcv_data.empty or len(ohlcv_data) < 20:
         logger.warning(f"[{code}] Insufficient data for signal generation")
@@ -142,7 +145,7 @@ async def generate_entry_signals_bulk(codes: List[str], market: str = "KR",
                                       strategy: str = "combined",
                                       min_score: float = 50) -> List[Dict]:
     """
-    여러 종목의 진입 신호 생성 (필터링)
+    여러 종목의 진입 신호 생성 (필터링) - 병렬 처리로 최적화
 
     Args:
         codes: 종목 코드 리스트
@@ -153,25 +156,36 @@ async def generate_entry_signals_bulk(codes: List[str], market: str = "KR",
     Returns:
         진입 신호 리스트 (점수 높은 순)
     """
-    results = []
+    # Semaphore로 동시 실행 수 제한 (API rate limit 고려)
+    semaphore = asyncio.Semaphore(5)  # 최대 5개 동시 실행
 
-    for code in codes:
-        try:
-            signal = await generate_entry_signal(code, market, strategy)
+    async def _process_with_limit(code: str):
+        async with semaphore:
+            try:
+                signal = await generate_entry_signal(code, market, strategy)
 
-            # 필터링: BUY 신호이고 최소 점수 이상
-            if signal["signal"] == "BUY" and signal["score"] >= min_score:
-                results.append(signal)
+                # 필터링: BUY 신호이고 최소 점수 이상
+                if signal["signal"] == "BUY" and signal["score"] >= min_score:
+                    return signal
 
-            # Rate limit 고려
-            await asyncio.sleep(0.3)
+                return None
 
-        except Exception as e:
-            logger.error(f"[{code}] Signal generation failed: {e}")
+            except Exception as e:
+                logger.error(f"[{code}] Signal generation failed: {e}")
+                return None
+
+    # 모든 종목을 병렬로 처리
+    logger.info(f"Processing {len(codes)} stocks in parallel (max 5 concurrent)...")
+    tasks = [_process_with_limit(code) for code in codes]
+    all_results = await asyncio.gather(*tasks)
+
+    # None 제거 및 결과 필터링
+    results = [r for r in all_results if r is not None]
 
     # 점수 높은 순 정렬
     results.sort(key=lambda x: x["score"], reverse=True)
 
+    logger.info(f"Found {len(results)} signals with score >= {min_score}")
     return results
 
 

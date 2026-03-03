@@ -9,6 +9,7 @@ import logging
 
 from ...backtest.engine import BacktestConfig, run_simple_backtest
 from ...backtest.analytics import PerformanceAnalytics, compare_strategies
+from ..schemas.backtest import BacktestRequest, CompareRequest
 
 logger = logging.getLogger(__name__)
 
@@ -19,28 +20,12 @@ _backtest_cache: dict = {}
 
 
 @router.post("/run")
-async def run_backtest(
-    symbols: List[str],
-    market: str = "US",
-    days: int = 90,
-    initial_capital: float = 10000.0,
-    entry_strategy: str = "combined",
-    min_entry_score: float = 60.0,
-    stop_loss_ratio: float = -0.02,
-    max_holding_days: int = 5
-):
+async def run_backtest(request: BacktestRequest):
     """
     백테스팅 실행
 
     Args:
-        symbols: 종목 코드 리스트 (예: ["AAPL", "MSFT", "GOOGL"])
-        market: KR | US
-        days: 백테스팅 기간 (일)
-        initial_capital: 초기 자본금
-        entry_strategy: volume | technical | pattern | combined
-        min_entry_score: 최소 진입 점수 (0-100)
-        stop_loss_ratio: 손절 비율 (예: -0.02 = -2%)
-        max_holding_days: 최대 보유 일수
+        request: 백테스팅 요청 (symbols, market, days, initial_capital 등)
 
     Returns:
         백테스팅 결과 리포트
@@ -48,23 +33,23 @@ async def run_backtest(
     try:
         # 날짜 범위 설정
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
+        start_date = end_date - timedelta(days=request.days)
 
         # 백테스팅 설정
         config = BacktestConfig(
-            initial_capital=initial_capital,
-            entry_strategy=entry_strategy,
-            min_entry_score=min_entry_score,
-            stop_loss_ratio=stop_loss_ratio,
-            max_holding_days=max_holding_days
+            initial_capital=request.initial_capital,
+            entry_strategy=request.entry_strategy,
+            min_entry_score=request.min_entry_score,
+            stop_loss_ratio=request.stop_loss_ratio,
+            max_holding_days=request.max_holding_days
         )
 
-        logger.info(f"Starting backtest: {len(symbols)} symbols, {days} days")
+        logger.info(f"Starting backtest: {len(request.symbols)} symbols, {request.days} days")
 
         # 백테스팅 실행
         result = await run_simple_backtest(
-            symbols=symbols,
-            market=market,
+            symbols=request.symbols,
+            market=request.market,
             start_date=start_date,
             end_date=end_date,
             config=config
@@ -82,8 +67,8 @@ async def run_backtest(
         return {
             "error": str(e),
             "summary": {
-                "initial_capital": initial_capital,
-                "final_capital": initial_capital,
+                "initial_capital": request.initial_capital,
+                "final_capital": request.initial_capital,
                 "net_profit": 0,
                 "roi": 0,
                 "total_trades": 0

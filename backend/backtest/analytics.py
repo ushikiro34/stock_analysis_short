@@ -112,7 +112,8 @@ class PerformanceAnalytics:
     def calculate_win_loss_ratio(winning_trades: int, losing_trades: int) -> float:
         """승패 비율"""
         if losing_trades == 0:
-            return float('inf') if winning_trades > 0 else 0.0
+            # JSON 직렬화를 위해 inf 대신 큰 값 사용
+            return 999.0 if winning_trades > 0 else 0.0
 
         return winning_trades / losing_trades
 
@@ -361,10 +362,10 @@ def compare_strategies(results: List[Dict]) -> Dict:
         "lowest_mdd": None
     }
 
-    best_roi_value = float('-inf')
-    best_sharpe_value = float('-inf')
+    best_roi_value = -999.0
+    best_sharpe_value = -999.0
     best_win_rate_value = 0
-    lowest_mdd_value = float('inf')
+    lowest_mdd_value = 999.0
 
     for result in results:
         strategy_name = result.get("config", {}).get("entry_strategy", "unknown")

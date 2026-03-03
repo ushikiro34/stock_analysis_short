@@ -1,366 +1,216 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import CandleChart from './components/CandleChart';
-import ScoreCard from './components/ScoreCard';
-import RiskCard from './components/RiskCard';
-import SurgeList from './components/SurgeList';
-import { Loader2 } from 'lucide-react';
-import { fetchStockScore, fetchDailyChart, fetchWeeklyChart, fetchMinuteChart, fetchSurgeStocks, type StockScore, type SurgeStock, type Market } from './lib/api';
+import { useState } from 'react';
+import { TrendingUp, Activity, BarChart3, Settings } from 'lucide-react';
+import type { Market } from './lib/api';
 
-type ChartMode = 'daily' | 'weekly' | 'minute';
+// Import page components
+import StocksDashboard from './pages/StocksDashboard';
+import SignalsDashboard from './pages/SignalsDashboard';
+import BacktestDashboard from './pages/BacktestDashboard';
+import OptimizeDashboard from './pages/OptimizeDashboard';
+
+type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize';
+
+export type PriceFilter = 'all' | 'penny' | 'range';
+
+export interface StockFilter {
+    priceFilter: PriceFilter;
+    priceFrom?: number;
+    priceTo?: number;
+    stockName: string;
+}
 
 function App() {
+    const [activeTab, setActiveTab] = useState<Tab>('stocks');
     const [market, setMarket] = useState<Market>('KR');
-    const [stockCode, setStockCode] = useState<string | null>(null);
-    const [candles, setCandles] = useState<any[]>([]);
-    const [score, setScore] = useState<StockScore | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [chartMode, setChartMode] = useState<ChartMode>('daily');
 
-    // Surge stocks state
-    const [surgeStocks, setSurgeStocks] = useState<SurgeStock[]>([]);
-    const [surgeLoading, setSurgeLoading] = useState(true);
+    // Stock filter state
+    const [stockFilter, setStockFilter] = useState<StockFilter>({
+        priceFilter: 'all',
+        priceFrom: undefined,
+        priceTo: undefined,
+        stockName: ''
+    });
 
-    // Current surge stock info
-    const surgeInfo = surgeStocks.find(s => s.code === stockCode);
-    const stockName = surgeInfo?.name ?? stockCode ?? '';
-
-    // Handle market switch
-    const handleMarketChange = useCallback((m: Market) => {
-        setMarket(m);
-        setStockCode(null);
-        setSurgeStocks([]);
-        setCandles([]);
-        setScore(null);
-        setError(null);
-        setSurgeLoading(true);
-        setChartMode('daily');
-    }, []);
-
-    // Load surge stocks + poll every 30s
-    useEffect(() => {
-        const loadSurge = async () => {
-            try {
-                const data = await fetchSurgeStocks(market);
-                setSurgeStocks(data);
-            } catch { /* ignore */ }
-            finally { setSurgeLoading(false); }
-        };
-        loadSurge();
-        const interval = setInterval(loadSurge, 30_000);
-        return () => clearInterval(interval);
-    }, [market]);
-
-    // Auto-select first surge stock
-    useEffect(() => {
-        if (surgeStocks.length > 0 && (!stockCode || !surgeStocks.find(s => s.code === stockCode))) {
-            setStockCode(surgeStocks[0].code);
-        }
-    }, [surgeStocks]);
-
-    // Reset to daily chart when stock changes
-    const handleSelectStock = useCallback((code: string) => {
-        setChartMode('daily');
-        setStockCode(code);
-    }, []);
-
-    // Load chart and score for selected stock
-    const chartModeRef = useRef(chartMode);
-    chartModeRef.current = chartMode;
-    const marketRef = useRef(market);
-    marketRef.current = market;
-
-    const loadStockData = useCallback(async (code: string, isPolling = false, mode?: ChartMode) => {
-        const currentMode = mode ?? chartModeRef.current;
-        const currentMarket = marketRef.current;
-        if (!isPolling) {
-            setLoading(true);
-            setError(null);
-        }
-        try {
-            const fetchChart = currentMode === 'minute' ? fetchMinuteChart : currentMode === 'weekly' ? fetchWeeklyChart : fetchDailyChart;
-            const [chartData, scoreData] = await Promise.all([
-                fetchChart(code, currentMarket),
-                fetchStockScore(code, currentMarket),
-            ]);
-
-            const chartFormatted = chartData.map((c) => {
-                if (currentMode === 'minute') {
-                    // 분봉: ISO string → Unix timestamp
-                    return {
-                        time: Math.floor(new Date(c.time).getTime() / 1000),
-                        open: c.open,
-                        high: c.high,
-                        low: c.low,
-                        close: c.close,
-                    };
-                }
-                // 일봉: "YYYY-MM-DD" string
-                return {
-                    time: c.time,
-                    open: c.open,
-                    high: c.high,
-                    low: c.low,
-                    close: c.close,
-                };
-            });
-            setCandles(chartFormatted);
-            setScore(scoreData);
-        } catch (err: any) {
-            if (!isPolling) setError(err?.message ?? '데이터를 불러오지 못했습니다.');
-        } finally {
-            if (!isPolling) setLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        if (stockCode) loadStockData(stockCode, false, chartMode);
-    }, [stockCode, chartMode, loadStockData]);
-
-    // 10s auto-refresh for chart
-    const stockCodeRef = useRef(stockCode);
-    stockCodeRef.current = stockCode;
-    useEffect(() => {
-        const interval = setInterval(() => {
-            if (stockCodeRef.current) loadStockData(stockCodeRef.current, true);
-        }, 10_000);
-        return () => clearInterval(interval);
-    }, [loadStockData]);
-
-    // Build warnings from score + fundamental/technical
-    const warnings: string[] = [];
-    if (score) {
-        if (Number(score.risk_penalty) > 0) warnings.push(`리스크 감점: -${score.risk_penalty}점`);
-        if (Number(score.stability_score) < 10) warnings.push('안정성 점수 낮음');
-        if (Number(score.total_score) < 50) warnings.push('총점 50점 미만 — 주의 필요');
-        if (score.fundamental?.net_loss) warnings.push('당기순손실 (EPS < 0)');
-        if (score.fundamental?.high_debt) warnings.push('고부채 비율');
-        if (score.technical?.rsi !== undefined) {
-            if (score.technical.rsi > 70) warnings.push(`RSI ${score.technical.rsi.toFixed(0)} — 과매수 구간`);
-            if (score.technical.rsi < 30) warnings.push(`RSI ${score.technical.rsi.toFixed(0)} — 과매도 구간`);
-        }
-    }
-
-    const scoreProps = score ? {
-        total: Number(score.total_score ?? 0),
-        value: Number(score.value_score ?? 0),
-        trend: Number(score.trend_score ?? 0),
-        stability: Number(score.stability_score ?? 0),
-        risk: Number(score.risk_penalty ?? 0),
-    } : { total: 0, value: 0, trend: 0, stability: 0, risk: 0 };
-
-    const fundamental = score?.fundamental;
-    const technical = score?.technical;
+    const tabs = [
+        { id: 'stocks' as Tab, label: '주식 분석', icon: Activity, color: 'text-blue-400' },
+        { id: 'signals' as Tab, label: '매매 신호', icon: TrendingUp, color: 'text-green-400' },
+        { id: 'backtest' as Tab, label: '백테스팅', icon: BarChart3, color: 'text-purple-400' },
+        { id: 'optimize' as Tab, label: '최적화', icon: Settings, color: 'text-orange-400' }
+    ];
 
     return (
-        <div className="h-screen flex overflow-hidden">
-            {/* Left Panel: Surge List */}
-            <aside className="w-80 shrink-0 border-r border-slate-700 p-4 overflow-y-auto">
-                {/* Market Toggle */}
-                <div className="flex gap-1 mb-4 bg-slate-800 rounded-lg p-1">
-                    <button
-                        onClick={() => handleMarketChange('KR')}
-                        className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
-                            market === 'KR' ? 'bg-primary text-white' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                    >
-                        한국
-                    </button>
-                    <button
-                        onClick={() => handleMarketChange('US')}
-                        className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
-                            market === 'US' ? 'bg-primary text-white' : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                    >
-                        미국
-                    </button>
+        <div className="h-screen flex flex-col bg-background text-slate-100">
+            {/* Top Navigation Bar */}
+            <header className="border-b border-slate-700 bg-surface">
+                <div className="flex items-center justify-between px-6 py-4">
+                    {/* Logo & Title */}
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+                            <Activity size={24} className="text-white" />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-bold">Stock Analysis System</h1>
+                            <p className="text-xs text-slate-400">단타매매 전문 시스템 v2.0</p>
+                        </div>
+                    </div>
+
+                    {/* Market Selector */}
+                    <div className="flex gap-2 bg-slate-800 rounded-lg p-1">
+                        <button
+                            onClick={() => setMarket('KR')}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                market === 'KR'
+                                    ? 'bg-primary text-white'
+                                    : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                        >
+                            🇰🇷 한국
+                        </button>
+                        <button
+                            onClick={() => setMarket('US')}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                market === 'US'
+                                    ? 'bg-primary text-white'
+                                    : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                        >
+                            🇺🇸 미국
+                        </button>
+                    </div>
                 </div>
 
-                <SurgeList
-                    stocks={surgeStocks}
-                    selectedCode={stockCode}
-                    onSelect={handleSelectStock}
-                    loading={surgeLoading}
-                    market={market}
-                />
-            </aside>
+                {/* Tab Navigation + Filter */}
+                <div className="flex items-center justify-between px-6">
+                    {/* Tabs */}
+                    <div className="flex gap-1">
+                        {tabs.map(tab => {
+                            const Icon = tab.icon;
+                            const isActive = activeTab === tab.id;
+                            return (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id)}
+                                    className={`flex items-center gap-2 px-5 py-3 font-medium transition-colors relative ${
+                                        isActive
+                                            ? 'text-white'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                >
+                                    <Icon size={18} className={isActive ? tab.color : ''} />
+                                    <span>{tab.label}</span>
+                                    {isActive && (
+                                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
 
-            {/* Right Panel: Detail View */}
-            <main className="flex-1 p-8 overflow-y-auto">
-                {/* Header */}
-                {stockCode && (
-                    <header className="flex items-center justify-between mb-8">
-                        <div>
-                            <h1 className="text-3xl font-bold">{stockName}</h1>
-                            <p className="text-slate-500">{stockCode}</p>
+                    {/* Stock Filter - Only show on stocks tab */}
+                    {activeTab === 'stocks' && (
+                        <div className="flex items-center gap-4 pb-3">
+                            {/* Price Filter Radio */}
+                            <div className="flex items-center gap-3 text-sm">
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                    <input
+                                        type="radio"
+                                        checked={stockFilter.priceFilter === 'all'}
+                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'all' })}
+                                        className="w-4 h-4"
+                                    />
+                                    <span className="text-slate-300">전체</span>
+                                </label>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                    <input
+                                        type="radio"
+                                        checked={stockFilter.priceFilter === 'penny'}
+                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'penny' })}
+                                        className="w-4 h-4"
+                                    />
+                                    <span className="text-slate-300">$1 미만</span>
+                                </label>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                    <input
+                                        type="radio"
+                                        checked={stockFilter.priceFilter === 'range'}
+                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'range' })}
+                                        className="w-4 h-4"
+                                    />
+                                    <span className="text-slate-300">가격 범위</span>
+                                </label>
+                            </div>
+
+                            {/* Price Range Inputs - Always visible */}
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="number"
+                                    placeholder="From"
+                                    value={stockFilter.priceFrom || ''}
+                                    onChange={(e) => setStockFilter({
+                                        ...stockFilter,
+                                        priceFrom: e.target.value ? Number(e.target.value) : undefined,
+                                        priceFilter: 'range'
+                                    })}
+                                    disabled={stockFilter.priceFilter !== 'range'}
+                                    className={`w-24 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-sm focus:outline-none focus:border-primary ${
+                                        stockFilter.priceFilter !== 'range' ? 'opacity-50 cursor-not-allowed' : ''
+                                    }`}
+                                />
+                                <span className="text-slate-500">~</span>
+                                <input
+                                    type="number"
+                                    placeholder="To"
+                                    value={stockFilter.priceTo || ''}
+                                    onChange={(e) => setStockFilter({
+                                        ...stockFilter,
+                                        priceTo: e.target.value ? Number(e.target.value) : undefined,
+                                        priceFilter: 'range'
+                                    })}
+                                    disabled={stockFilter.priceFilter !== 'range'}
+                                    className={`w-24 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-sm focus:outline-none focus:border-primary ${
+                                        stockFilter.priceFilter !== 'range' ? 'opacity-50 cursor-not-allowed' : ''
+                                    }`}
+                                />
+                            </div>
+
+                            {/* Stock Name Search */}
+                            <input
+                                type="text"
+                                placeholder="종목명 검색..."
+                                value={stockFilter.stockName}
+                                onChange={(e) => setStockFilter({ ...stockFilter, stockName: e.target.value })}
+                                className="w-48 px-3 py-1 bg-slate-800 border border-slate-700 rounded text-sm focus:outline-none focus:border-primary"
+                            />
                         </div>
-                        {surgeInfo && (
-                            <div className="text-right">
-                                <div className="text-2xl font-mono font-bold">
-                                    {market === 'US' ? '$' : ''}{surgeInfo.price.toLocaleString()}{market === 'KR' ? '원' : ''}
-                                </div>
-                                <div className={`text-sm font-mono ${surgeInfo.change_rate > 0 ? 'text-danger' : 'text-blue-400'}`}>
-                                    {surgeInfo.change_rate > 0 ? '+' : ''}{market === 'US' ? '$' : ''}{surgeInfo.change_price.toLocaleString()}{market === 'KR' ? '원' : ''} ({surgeInfo.change_rate > 0 ? '+' : ''}{surgeInfo.change_rate.toFixed(2)}%)
-                                </div>
-                            </div>
-                        )}
-                    </header>
-                )}
+                    )}
+                </div>
+            </header>
 
-                {/* Loading */}
-                {loading && (
-                    <div className="flex items-center justify-center py-20">
-                        <Loader2 className="animate-spin text-primary mr-3" size={28} />
-                        <span className="text-slate-400 text-lg">데이터 로딩 중...</span>
-                    </div>
-                )}
-
-                {error && !loading && (
-                    <div className="text-center py-16 text-slate-500">
-                        <p className="text-lg mb-2">{error}</p>
-                    </div>
-                )}
-
-                {!stockCode && !loading && (
-                    <div className="text-center py-20 text-slate-500">
-                        <p className="text-lg">좌측 급등주 리스트에서 종목을 선택하세요.</p>
-                    </div>
-                )}
-
-                {/* Main Content */}
-                {stockCode && !loading && !error && (
-                    <div className="space-y-6">
-                        {/* Chart mode toggle */}
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => setChartMode('daily')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                                    chartMode === 'daily'
-                                        ? 'bg-primary text-white'
-                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                                }`}
-                            >
-                                일봉
-                            </button>
-                            <button
-                                onClick={() => setChartMode('weekly')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                                    chartMode === 'weekly'
-                                        ? 'bg-primary text-white'
-                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                                }`}
-                            >
-                                주봉
-                            </button>
-                            <button
-                                onClick={() => setChartMode('minute')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                                    chartMode === 'minute'
-                                        ? 'bg-primary text-white'
-                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                                }`}
-                            >
-                                분봉
-                            </button>
-                        </div>
-
-                        {/* Chart - full width */}
-                        {candles.length > 0 ? (
-                            <CandleChart data={candles} />
-                        ) : (
-                            <div className="bg-surface p-12 rounded-xl border border-slate-700 text-center text-slate-500">
-                                차트 데이터가 없습니다.
-                            </div>
-                        )}
-
-                        {/* Info cards row */}
-                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-                            <ScoreCard {...scoreProps} />
-                            <RiskCard warnings={warnings} />
-
-                            {/* 펀더멘털 */}
-                            <div className="bg-surface p-5 rounded-xl border border-slate-700">
-                                <h3 className="text-sm font-bold text-slate-300 mb-3">펀더멘털</h3>
-                                {fundamental ? (
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">PER</span>
-                                            <span className={`font-mono ${fundamental.per < 20 ? 'text-green-400' : fundamental.per > 50 ? 'text-red-400' : 'text-slate-300'}`}>
-                                                {fundamental.per.toFixed(1)}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">PBR</span>
-                                            <span className={`font-mono ${fundamental.pbr < 1.5 ? 'text-green-400' : 'text-slate-300'}`}>
-                                                {fundamental.pbr.toFixed(2)}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">ROE</span>
-                                            <span className={`font-mono ${fundamental.roe > 10 ? 'text-green-400' : 'text-slate-300'}`}>
-                                                {fundamental.roe.toFixed(1)}%
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">EPS</span>
-                                            <span className={`font-mono ${fundamental.eps > 0 ? 'text-slate-300' : 'text-red-400'}`}>
-                                                {market === 'US' ? '$' : ''}{fundamental.eps.toLocaleString()}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">BPS</span>
-                                            <span className="font-mono text-slate-300">
-                                                {market === 'US' ? '$' : ''}{fundamental.bps.toLocaleString()}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <p className="text-slate-600 text-xs">데이터 없음</p>
-                                )}
-                            </div>
-
-                            {/* 기술적 지표 */}
-                            <div className="bg-surface p-5 rounded-xl border border-slate-700">
-                                <h3 className="text-sm font-bold text-slate-300 mb-3">기술적 지표</h3>
-                                {technical ? (
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">RSI(14)</span>
-                                            <span className={`font-mono ${technical.rsi > 70 ? 'text-red-400' : technical.rsi < 30 ? 'text-blue-400' : 'text-slate-300'}`}>
-                                                {technical.rsi.toFixed(1)}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">MA20</span>
-                                            <span className="font-mono text-slate-300">{technical.ma20?.toLocaleString() ?? '-'}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">MA60</span>
-                                            <span className="font-mono text-slate-300">{technical.ma60?.toLocaleString() ?? '-'}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">변동성</span>
-                                            <span className="font-mono text-slate-300">{(technical.volatility * 100).toFixed(2)}%</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-500">60일 수익률</span>
-                                            <span className={`font-mono ${technical.return_60d > 0 ? 'text-danger' : 'text-blue-400'}`}>
-                                                {technical.return_60d > 0 ? '+' : ''}{technical.return_60d.toFixed(1)}%
-                                            </span>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <p className="text-slate-600 text-xs">데이터 없음</p>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                <footer className="mt-12 text-center text-slate-600 text-sm">
-                    <p>&copy; 2026 Personal Stock Analysis System. Not financial advice.</p>
-                </footer>
+            {/* Main Content Area */}
+            <main className="flex-1 overflow-hidden p-6">
+                {activeTab === 'stocks' && <StocksDashboard market={market} filter={stockFilter} />}
+                {activeTab === 'signals' && <SignalsDashboard market={market} />}
+                {activeTab === 'backtest' && <BacktestDashboard market={market} />}
+                {activeTab === 'optimize' && <OptimizeDashboard market={market} />}
             </main>
+
+            {/* Footer */}
+            <footer className="border-t border-slate-700 bg-surface px-6 py-3">
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                    <p>&copy; 2026 Stock Analysis System. Not financial advice.</p>
+                    <div className="flex items-center gap-4">
+                        <span>API: http://localhost:8000</span>
+                        <a
+                            href="http://localhost:8000/docs"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline"
+                        >
+                            API 문서
+                        </a>
+                    </div>
+                </div>
+            </footer>
         </div>
     );
 }

@@ -29,7 +29,7 @@ async def get_entry_signal(code: str, market: str = "KR", strategy: str = "combi
     Args:
         code: 종목 코드
         market: KR | US
-        strategy: volume | technical | pattern | combined
+        strategy: volume | technical | pattern | rsi_golden_cross | combined
 
     Returns:
         {
@@ -64,7 +64,7 @@ async def scan_entry_signals(market: str = "KR", strategy: str = "combined", min
 
     Args:
         market: KR | US
-        strategy: volume | technical | pattern | combined
+        strategy: volume | technical | pattern | rsi_golden_cross | combined
         min_score: 최소 점수 (0-100)
 
     Returns:

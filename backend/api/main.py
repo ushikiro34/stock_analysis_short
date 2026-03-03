@@ -12,7 +12,8 @@ from .routers import (
     stocks_router,
     signals_router,
     backtest_router,
-    optimize_router
+    optimize_router,
+    sectors_router
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ app.include_router(stocks_router)
 app.include_router(signals_router)
 app.include_router(backtest_router)
 app.include_router(optimize_router)
+app.include_router(sectors_router)
 
 
 # ── Background Tasks ──────────────────────────────────────────
@@ -98,6 +100,7 @@ async def on_startup():
     global collector_task, scorer_task
     collector_task = asyncio.create_task(run_collector())
     scorer_task = asyncio.create_task(run_scorer())
+    logger.info(f"Background tasks started: collector={collector_task.get_name()}, scorer={scorer_task.get_name()}")
 
 
 # ── WebSocket ────────────────────────────────────────────────
@@ -123,11 +126,14 @@ manager = ConnectionManager()
 @app.websocket("/ws/{code}")
 async def websocket_endpoint(websocket: WebSocket, code: str):
     await manager.connect(websocket)
+    logger.info(f"WebSocket connected for code: {code}")
     try:
         while True:
-            data = await websocket.receive_text()
+            await websocket.receive_text()
+            # TODO: Handle incoming websocket data
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+        logger.info(f"WebSocket disconnected for code: {code}")
 
 
 # ── Root Endpoint ────────────────────────────────────────────
@@ -172,6 +178,15 @@ async def root():
                     "POST /optimize/quick",
                     "GET /optimize/metrics",
                     "GET /optimize/param-ranges"
+                ]
+            },
+            "📊 Sectors": {
+                "description": "섹터별 실시간 분석",
+                "endpoints": [
+                    "GET /sectors/list",
+                    "GET /sectors/{sector}/analyze",
+                    "GET /sectors/compare",
+                    "GET /sectors/{sector}/signals"
                 ]
             }
         },

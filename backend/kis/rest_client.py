@@ -1,11 +1,9 @@
 import os
 import logging
-import asyncio
 import time
 import httpx
 from datetime import datetime
 from dotenv import load_dotenv
-from pykrx import stock
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -86,51 +84,74 @@ class KISRestClient:
 
         results.reverse()  # 시간 오름차순으로
         return results
-    async def get_volume_rank(self, max_price: int = 20000, limit: int = 20) -> list[dict]:
-        """pykrx로 급등주 조회: 등락률 상위 + 가격 필터"""
-        today = datetime.now().strftime("%Y%m%d")
+    async def get_volume_rank(self, max_price: int = 20000, limit: int = 100) -> list[dict]:
+        """KIS REST API로 거래량 상위 급등주 조회"""
+        token = await self._get_token()
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHPST01720000",
+            "content-type": "application/json; charset=utf-8",
+        }
 
-        # pykrx는 동기 함수이므로 스레드에서 실행
-        loop = asyncio.get_event_loop()
-        df = await loop.run_in_executor(
-            None, lambda: stock.get_market_ohlcv_by_ticker(today, market="ALL")
-        )
+        all_results: list[dict] = []
 
-        if df.empty:
-            logger.warning("pykrx returned empty dataframe")
-            return []
+        # KOSPI + KOSDAQ 모두 조회
+        for mkt_code in ("J", "Q"):
+            params = {
+                "FID_COND_MRKT_DIV_CODE": mkt_code,
+                "FID_COND_SCR_DIV_CODE": "20171",
+                "FID_INPUT_ISCD": "0000",
+                "FID_DIV_CLS_CODE": "0",
+                "FID_BLNG_CLS_CODE": "0",
+                "FID_TRGT_CLS_CODE": "111111111",
+                "FID_TRGT_EXLS_CLS_CODE": "000000",
+                "FID_INPUT_PRICE_1": "",
+                "FID_INPUT_PRICE_2": str(max_price),
+                "FID_VOL_CNT": "100000",
+                "FID_INPUT_DATE_1": "",
+                "FID_RANK_SORT_CLS_CODE": "0",
+            }
 
-        # 필터: 가격 > 0, 가격 < max_price, 등락률 > 0
-        filtered = df[
-            (df["종가"] > 0) & (df["종가"] < max_price) & (df["등락률"] > 0)
-        ]
+            try:
+                async with httpx.AsyncClient(verify=False) as client:
+                    res = await client.get(
+                        f"{self.BASE_URL}/uapi/domestic-stock/v1/quotations/volume-rank",
+                        headers=headers,
+                        params=params,
+                    )
+                    res.raise_for_status()
+                    data = res.json()
 
-        # 등락률 내림차순 정렬
-        top = filtered.sort_values("등락률", ascending=False).head(limit)
+                if data.get("rt_cd") != "0":
+                    logger.warning(f"KIS volume rank error (mkt={mkt_code}): {data.get('msg1')}")
+                    continue
 
-        # 종목명 조회
-        names = {}
-        try:
-            name_list = await loop.run_in_executor(
-                None, lambda: {t: stock.get_market_ticker_name(t) for t in top.index}
-            )
-            names = name_list
-        except Exception:
-            pass
+                for item in data.get("output", []):
+                    try:
+                        price = int(item.get("stck_prpr", "0"))
+                        if price <= 0 or price > max_price:
+                            continue
+                        change_rate = float(item.get("prdy_ctrt", "0"))
+                        if change_rate <= 0:
+                            continue
+                        all_results.append({
+                            "code": item.get("mksc_shrn_iscd", ""),
+                            "name": item.get("hts_kor_isnm", ""),
+                            "price": price,
+                            "change_rate": round(change_rate, 2),
+                            "volume": int(item.get("acml_vol", "0")),
+                            "change_price": int(item.get("prdy_vrss", "0")),
+                        })
+                    except (ValueError, TypeError):
+                        continue
 
-        results = []
-        for ticker in top.index:
-            row = top.loc[ticker]
-            prev_close = int(row["종가"] - row["종가"] * row["등락률"] / (100 + row["등락률"]))
-            change_price = int(row["종가"]) - prev_close
-            results.append({
-                "code": ticker,
-                "name": names.get(ticker, ticker),
-                "price": int(row["종가"]),
-                "change_rate": round(float(row["등락률"]), 2),
-                "volume": int(row["거래량"]),
-                "change_price": change_price,
-            })
+            except Exception as e:
+                logger.error(f"KIS volume rank error (mkt={mkt_code}): {e}")
 
-        logger.info(f"Surge stocks found: {len(results)}")
-        return results
+        # 등락률 내림차순 정렬 후 limit 적용
+        all_results.sort(key=lambda x: x["change_rate"], reverse=True)
+        result = all_results[:limit]
+        logger.info(f"KIS surge stocks: {len(result)}")
+        return result

@@ -135,20 +135,28 @@ export default function SignalsDashboard({ market }: SignalsDashboardProps) {
                                 >
                                     {/* Header */}
                                     <div className="flex items-start justify-between mb-4">
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <h3 className="text-xl font-bold">{signal.code}</h3>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <h3 className="text-xl font-bold">
+                                                    {signal.stock_info?.name
+                                                        ? `${signal.stock_info.name}(${signal.code})`
+                                                        : signal.code}
+                                                </h3>
                                                 <span className={`px-2 py-1 rounded text-xs font-bold ${getStrengthBadge(signal.strength)}`}>
                                                     {signal.strength.toUpperCase()}
                                                 </span>
                                             </div>
                                             {signal.current_price && (
-                                                <p className="text-2xl font-mono font-bold">
-                                                    {market === 'US' ? '$' : ''}{signal.current_price.toLocaleString()}{market === 'KR' ? '원' : ''}
-                                                </p>
+                                                <div className="flex items-center gap-1 text-slate-300">
+                                                    <span className="text-sm">[주가 :</span>
+                                                    <span className="text-2xl font-bold font-mono">
+                                                        {market === 'US' ? '$' : ''}{signal.current_price.toLocaleString()}{market === 'KR' ? '원' : ''}
+                                                    </span>
+                                                    <span className="text-sm">]</span>
+                                                </div>
                                             )}
                                         </div>
-                                        <div className="text-right">
+                                        <div className="text-right ml-3 shrink-0">
                                             <div className="text-3xl font-bold">{signal.score.toFixed(0)}</div>
                                             <div className="text-xs text-slate-400">점수</div>
                                         </div>

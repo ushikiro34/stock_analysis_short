@@ -6,11 +6,12 @@ interface SurgeListProps {
     stocks: SurgeStock[];
     selectedCode: string | null;
     onSelect: (code: string) => void;
+    onManualSelect: (code: string) => void;
     loading: boolean;
     market: Market;
 }
 
-export default function SurgeList({ stocks, selectedCode, onSelect, loading, market }: SurgeListProps) {
+export default function SurgeList({ stocks, selectedCode, onSelect, onManualSelect, loading, market }: SurgeListProps) {
     const [manualCode, setManualCode] = useState('');
 
     const formatVolume = (v: number) => {
@@ -22,7 +23,7 @@ export default function SurgeList({ stocks, selectedCode, onSelect, loading, mar
     const handleManualSearch = (e: React.FormEvent) => {
         e.preventDefault();
         if (manualCode.trim()) {
-            onSelect(manualCode.trim().toUpperCase());
+            onManualSelect(manualCode.trim().toUpperCase());
             setManualCode('');
         }
     };

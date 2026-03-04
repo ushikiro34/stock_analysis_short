@@ -1,11 +1,18 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
+import asyncio
+import logging
+from pathlib import Path
+from dotenv import load_dotenv
+
+# .env를 프로젝트 루트에서 명시적으로 로드 (실행 위치 무관)
+_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=_ENV_PATH, override=False)
+
 from ..core.score_service import calculate_scores_for_codes
 from ..collector.aggregator import Aggregator
 from ..collector.websocket_client import KISWebSocketClient
-import asyncio
-import logging
 
 # Import routers
 from .routers import (
@@ -97,6 +104,12 @@ async def run_scorer():
 
 @app.on_event("startup")
 async def on_startup():
+    import os
+    logger.info(f".env 경로: {_ENV_PATH} (존재: {_ENV_PATH.exists()})")
+    logger.info(f"KIS_APP_KEY: {'SET' if os.getenv('KIS_APP_KEY') else 'NOT SET'}")
+    logger.info(f"KIS_APP_SECRET: {'SET' if os.getenv('KIS_APP_SECRET') else 'NOT SET'}")
+    logger.info(f"DATABASE_URL: {'SET' if os.getenv('DATABASE_URL') else 'NOT SET'}")
+
     global collector_task, scorer_task
     collector_task = asyncio.create_task(run_collector())
     scorer_task = asyncio.create_task(run_scorer())

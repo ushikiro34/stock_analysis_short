@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { TrendingUp, Activity, BarChart3, Settings } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Settings, Search } from 'lucide-react';
 import type { Market } from './lib/api';
 
 // Import page components
@@ -30,6 +30,12 @@ function App() {
         priceTo: undefined,
         stockName: ''
     });
+
+    // 종목명 검색 - 엔터 또는 조회 버튼으로만 실행
+    const [stockNameInput, setStockNameInput] = useState('');
+    const handleStockNameSearch = () => {
+        setStockFilter(f => ({ ...f, stockName: stockNameInput }));
+    };
 
     const tabs = [
         { id: 'stocks' as Tab, label: '주식 분석', icon: Activity, color: 'text-blue-400' },
@@ -173,14 +179,24 @@ function App() {
                                 />
                             </div>
 
-                            {/* Stock Name Search */}
-                            <input
-                                type="text"
-                                placeholder="종목명 검색..."
-                                value={stockFilter.stockName}
-                                onChange={(e) => setStockFilter({ ...stockFilter, stockName: e.target.value })}
-                                className="w-48 px-3 py-1 bg-slate-800 border border-slate-700 rounded text-sm focus:outline-none focus:border-primary"
-                            />
+                            {/* Stock Name Search - 엔터 또는 조회 버튼 */}
+                            <div className="flex items-center gap-1">
+                                <input
+                                    type="text"
+                                    placeholder="종목명 검색..."
+                                    value={stockNameInput}
+                                    onChange={(e) => setStockNameInput(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleStockNameSearch()}
+                                    className="w-40 px-3 py-1 bg-slate-800 border border-slate-700 rounded text-sm focus:outline-none focus:border-primary"
+                                />
+                                <button
+                                    onClick={handleStockNameSearch}
+                                    className="px-2 py-1 bg-primary hover:bg-primary/80 rounded text-sm transition-colors flex items-center gap-1"
+                                >
+                                    <Search size={14} />
+                                    <span>조회</span>
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>

@@ -16,6 +16,8 @@ interface StocksDashboardProps {
 
 export default function StocksDashboard({ market, filter }: StocksDashboardProps) {
     const [stockCode, setStockCode] = useState<string | null>(null);
+    const isManualSelectionRef = useRef(false);
+    const loadIdRef = useRef(0); // stale 요청 무시용
     const [candles, setCandles] = useState<any[]>([]);
     const [score, setScore] = useState<StockScore | null>(null);
     const [loading, setLoading] = useState(false);
@@ -60,6 +62,7 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
 
     // Load surge stocks + poll every 30s
     useEffect(() => {
+        isManualSelectionRef.current = false;
         setSurgeStocks([]);
         setStockCode(null);
         setCandles([]);
@@ -80,15 +83,24 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
         return () => clearInterval(interval);
     }, [market]);
 
-    // Auto-select first filtered stock
+    // Auto-select first filtered stock (수동 입력 시 건너뜀)
     useEffect(() => {
+        if (isManualSelectionRef.current) return;
         if (filteredStocks.length > 0 && (!stockCode || !filteredStocks.find(s => s.code === stockCode))) {
             setStockCode(filteredStocks[0].code);
         }
     }, [filteredStocks, stockCode]);
 
-    // Reset to daily chart when stock changes
+    // Reset to daily chart when stock changes (리스트 클릭 선택)
     const handleSelectStock = useCallback((code: string) => {
+        isManualSelectionRef.current = false;
+        setChartMode('daily');
+        setStockCode(code);
+    }, []);
+
+    // 레프트메뉴 수동 코드 입력 - auto-select 덮어쓰기 방지
+    const handleManualSelect = useCallback((code: string) => {
+        isManualSelectionRef.current = true;
         setChartMode('daily');
         setStockCode(code);
     }, []);
@@ -100,6 +112,7 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
     marketRef.current = market;
 
     const loadStockData = useCallback(async (code: string, isPolling = false, mode?: ChartMode) => {
+        const myLoadId = ++loadIdRef.current;
         const currentMode = mode ?? chartModeRef.current;
         const currentMarket = marketRef.current;
         if (!isPolling) {
@@ -112,6 +125,9 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                 fetchChart(code, currentMarket),
                 fetchStockScore(code, currentMarket),
             ]);
+
+            // 더 최신 요청이 시작됐으면 이 응답은 무시
+            if (myLoadId !== loadIdRef.current) return;
 
             const chartFormatted = chartData.map((c) => {
                 if (currentMode === 'minute') {
@@ -134,9 +150,10 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
             setCandles(chartFormatted);
             setScore(scoreData);
         } catch (err: any) {
+            if (myLoadId !== loadIdRef.current) return;
             if (!isPolling) setError(err?.message ?? '데이터를 불러오지 못했습니다.');
         } finally {
-            if (!isPolling) setLoading(false);
+            if (myLoadId === loadIdRef.current && !isPolling) setLoading(false);
         }
     }, []);
 
@@ -187,6 +204,7 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                     stocks={filteredStocks}
                     selectedCode={stockCode}
                     onSelect={handleSelectStock}
+                    onManualSelect={handleManualSelect}
                     loading={surgeLoading}
                     market={market}
                 />
@@ -385,40 +403,40 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">PER</span>
                                         <span className={`font-mono ${
-                                            fundamental.per < 20 ? 'text-green-400' :
-                                            fundamental.per > 50 ? 'text-red-400' : 'text-slate-300'
+                                            (fundamental.per ?? 0) < 20 ? 'text-green-400' :
+                                            (fundamental.per ?? 0) > 50 ? 'text-red-400' : 'text-slate-300'
                                         }`}>
-                                            {fundamental.per.toFixed(1)}
+                                            {fundamental.per != null ? fundamental.per.toFixed(1) : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">PBR</span>
                                         <span className={`font-mono ${
-                                            fundamental.pbr < 1.5 ? 'text-green-400' : 'text-slate-300'
+                                            (fundamental.pbr ?? 0) < 1.5 ? 'text-green-400' : 'text-slate-300'
                                         }`}>
-                                            {fundamental.pbr.toFixed(2)}
+                                            {fundamental.pbr != null ? fundamental.pbr.toFixed(2) : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">ROE</span>
                                         <span className={`font-mono ${
-                                            fundamental.roe > 10 ? 'text-green-400' : 'text-slate-300'
+                                            (fundamental.roe ?? 0) > 10 ? 'text-green-400' : 'text-slate-300'
                                         }`}>
-                                            {fundamental.roe.toFixed(1)}%
+                                            {fundamental.roe != null ? `${fundamental.roe.toFixed(1)}%` : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">EPS</span>
                                         <span className={`font-mono ${
-                                            fundamental.eps > 0 ? 'text-slate-300' : 'text-red-400'
+                                            (fundamental.eps ?? 0) > 0 ? 'text-slate-300' : 'text-red-400'
                                         }`}>
-                                            {market === 'US' ? '$' : ''}{fundamental.eps.toLocaleString()}
+                                            {fundamental.eps != null ? `${market === 'US' ? '$' : ''}${fundamental.eps.toLocaleString()}` : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">BPS</span>
                                         <span className="font-mono text-slate-300">
-                                            {market === 'US' ? '$' : ''}{fundamental.bps.toLocaleString()}
+                                            {fundamental.bps != null ? `${market === 'US' ? '$' : ''}${fundamental.bps.toLocaleString()}` : '-'}
                                         </span>
                                     </div>
                                 </div>
@@ -435,10 +453,10 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">RSI(14)</span>
                                         <span className={`font-mono ${
-                                            technical.rsi > 70 ? 'text-red-400' :
-                                            technical.rsi < 30 ? 'text-blue-400' : 'text-slate-300'
+                                            (technical.rsi ?? 50) > 70 ? 'text-red-400' :
+                                            (technical.rsi ?? 50) < 30 ? 'text-blue-400' : 'text-slate-300'
                                         }`}>
-                                            {technical.rsi.toFixed(1)}
+                                            {technical.rsi != null ? technical.rsi.toFixed(1) : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
@@ -456,15 +474,17 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">변동성</span>
                                         <span className="font-mono text-slate-300">
-                                            {(technical.volatility * 100).toFixed(2)}%
+                                            {technical.volatility != null ? `${(technical.volatility * 100).toFixed(2)}%` : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">60일 수익률</span>
                                         <span className={`font-mono ${
-                                            technical.return_60d > 0 ? 'text-red-400' : 'text-blue-400'
+                                            (technical.return_60d ?? 0) > 0 ? 'text-red-400' : 'text-blue-400'
                                         }`}>
-                                            {technical.return_60d > 0 ? '+' : ''}{technical.return_60d.toFixed(1)}%
+                                            {technical.return_60d != null
+                                                ? `${technical.return_60d > 0 ? '+' : ''}${technical.return_60d.toFixed(1)}%`
+                                                : '-'}
                                         </span>
                                     </div>
                                 </div>

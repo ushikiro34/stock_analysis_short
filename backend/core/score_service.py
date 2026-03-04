@@ -6,15 +6,23 @@ Supports both DB-backed and in-memory (no DB) modes.
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from decimal import Decimal
 
 import pandas as pd
-from pykrx import stock as pykrx_stock
 
 from .scorer import Scorer
 from .indicators import IndicatorEngine
 
 logger = logging.getLogger(__name__)
+
+# KIS 클라이언트 싱글턴 (토큰 재사용을 위해 모듈 레벨에서 공유)
+_kis_client = None
+
+def _get_kis_client():
+    global _kis_client
+    if _kis_client is None:
+        from ..kis.rest_client import KISRestClient
+        _kis_client = KISRestClient()
+    return _kis_client
 
 
 async def _run_sync(fn):
@@ -24,55 +32,16 @@ async def _run_sync(fn):
 
 
 async def collect_fundamental(code: str, market: str = "KR") -> dict:
-    """펀더멘털 데이터 수집 (KR: pykrx, US: yfinance)"""
+    """펀더멘털 데이터 수집 (KR: KIS REST API, US: yfinance)"""
     if market == "US":
         from ..us.yfinance_client import get_us_fundamental
         return await get_us_fundamental(code)
 
-    today = datetime.now().strftime("%Y%m%d")
-
+    # KR: KIS REST API 사용 (pykrx의 KRX 통계 API는 인증 정책 변경으로 사용 불가)
     try:
-        # 개별종목 펀더멘털 (최근 거래일 기준)
-        df = await _run_sync(
-            lambda: pykrx_stock.get_market_fundamental_by_date(
-                (datetime.now() - timedelta(days=7)).strftime("%Y%m%d"),
-                today,
-                code,
-            )
-        )
-        if df.empty:
-            logger.warning(f"[{code}] No fundamental data from pykrx")
-            return {}
-
-        # 가장 최근 행
-        latest = df.iloc[-1]
-        per = float(latest.get("PER", 0) or 0)
-        pbr = float(latest.get("PBR", 0) or 0)
-        eps = float(latest.get("EPS", 0) or 0)
-        bps = float(latest.get("BPS", 0) or 0)
-        div_rate = float(latest.get("DIV", 0) or 0)
-
-        # ROE 추정: EPS / BPS * 100
-        roe = (eps / bps * 100) if bps > 0 else 0
-
-        # net_loss: EPS가 음수면 당기순손실
-        net_loss = eps < 0
-
-        # high_debt: PBR > 3이면 고부채 간주 (간이 판단)
-        high_debt = pbr > 3.0
-
-        return {
-            "per": per,
-            "pbr": pbr,
-            "roe": roe,
-            "eps": eps,
-            "bps": bps,
-            "eps_growth": 0,  # 단일 시점이라 성장률 계산 불가 → 0
-            "net_loss": net_loss,
-            "high_debt": high_debt,
-        }
+        return await _get_kis_client().get_kr_fundamental(code)
     except Exception as e:
-        logger.error(f"[{code}] Fundamental collection error: {e}")
+        logger.error(f"[{code}] KIS fundamental collection error: {e}")
         return {}
 
 

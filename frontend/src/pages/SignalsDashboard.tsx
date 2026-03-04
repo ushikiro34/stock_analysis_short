@@ -1,17 +1,30 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { scanSignals, type EntrySignal, type Market } from '../lib/api';
 import { TrendingUp, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 
 interface SignalsDashboardProps {
     market: Market;
+    focusCode?: string;
+    onFocusDone?: () => void;
 }
 
-export default function SignalsDashboard({ market }: SignalsDashboardProps) {
+export default function SignalsDashboard({ market, focusCode, onFocusDone }: SignalsDashboardProps) {
     const [signals, setSignals] = useState<EntrySignal[]>([]);
     const [loading, setLoading] = useState(true);
     const [strategy, setStrategy] = useState('combined');
     const [minScore, setMinScore] = useState(60);
     const [error, setError] = useState<string | null>(null);
+    const signalRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+    // 알럿에서 이동 시 해당 신호 카드로 스크롤
+    useEffect(() => {
+        if (!focusCode || loading || signals.length === 0) return;
+        const el = signalRefs.current[focusCode];
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            onFocusDone?.();
+        }
+    }, [focusCode, loading, signals]);
 
     const loadSignals = async () => {
         setLoading(true);
@@ -131,7 +144,10 @@ export default function SignalsDashboard({ market }: SignalsDashboardProps) {
                             {signals.map((signal, idx) => (
                                 <div
                                     key={idx}
-                                    className={`border rounded-xl p-5 ${getSignalColor(signal)}`}
+                                    ref={el => { signalRefs.current[signal.code] = el; }}
+                                    className={`border rounded-xl p-5 transition-all ${getSignalColor(signal)} ${
+                                        focusCode === signal.code ? 'ring-2 ring-white/60 shadow-lg' : ''
+                                    }`}
                                 >
                                     {/* Header */}
                                     <div className="flex items-start justify-between mb-4">

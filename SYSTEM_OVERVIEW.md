@@ -49,14 +49,19 @@ const data = await fetchSurgeStocks(market);
 
 사용자가 UI에서 추가로 필터링 가능:
 
-1. **가격 필터** (Price Filter)
+1. **가격 필터** (Price Filter) - 시장별 통화 분리
    - **전체**: 모든 가격대
-   - **$1 미만**: Penny stocks
+   - **저가주 필터**:
+     - 🇰🇷 한국장: `1,000원 미만`
+     - 🇺🇸 미국장: `$1 미만`
    - **가격 범위**: 사용자 지정 (From ~ To)
+     - 🇰🇷 한국장: 원(₩) 단위 입력 (`최소(원)` ~ `최대(원)`)
+     - 🇺🇸 미국장: 달러($) 단위 입력 (`From($)` ~ `To($)`)
+   - **시장 전환 시**: 가격 필터 자동 초기화 (원/달러 혼용 방지)
 
 2. **종목명 검색**
-   - 종목 코드 검색 (예: AAPL)
-   - 종목명 검색 (예: Apple)
+   - 종목 코드 검색 (예: AAPL, 005930)
+   - 종목명 검색 (예: Apple, 삼성전자)
    - 대소문자 구분 없음
 
 ```typescript
@@ -628,12 +633,13 @@ async def get_combined_surge_stocks(limit: int = 100):
 │  │               Data Sources                           │   │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │   │
 │  │  │ KIS REST    │  │ Yahoo       │  │ Finviz      │ │   │
-│  │  │ (KR 시장)   │  │ Finance     │  │ Screener    │ │   │
-│  │  │             │  │ (US 급등주) │  │ (US 500+)   │ │   │
+│  │  │ (KR 급등주  │  │ Finance     │  │ Screener    │ │   │
+│  │  │  + 펀더멘털)│  │ (US 급등주) │  │ (US 500+)   │ │   │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘ │   │
 │  │  ┌─────────────┐                                     │   │
 │  │  │ pykrx       │                                     │   │
-│  │  │ (KR OHLCV)  │                                     │   │
+│  │  │ (KR OHLCV   │                                     │   │
+│  │  │  기술지표만)│                                     │   │
 │  │  └─────────────┘                                     │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
@@ -669,6 +675,49 @@ async def get_combined_surge_stocks(limit: int = 100):
 
 ## 변경 이력
 
+### v2.2.0 (2026-03-04)
+
+#### 백엔드
+- ✅ **KIS REST API KR 급등주 교체** (`backend/kis/rest_client.py`)
+  - 기존: pykrx → KRX 사이트 스크래핑 (LOGOUT 응답으로 인해 작동 불가)
+  - 변경: KIS REST API `FHPST01720000` 트랜잭션으로 교체
+  - KOSPI(`J`) + KOSDAQ(`Q`) 거래량 상위 종목 각각 조회 후 병합
+  - `change_rate` 양수 종목만 필터링, 내림차순 정렬
+  - KIS 토큰 23시간 캐싱으로 분당 1회 Rate Limit 방지
+
+- ✅ **KR 종목 펀더멘털 조회 KIS REST API로 교체** (`backend/core/score_service.py`, `backend/kis/rest_client.py`)
+  - **원인**: KRX가 통계 데이터 API(`MDCSTAT` 시리즈)에 실제 로그인 세션 요구하도록 정책 변경
+    - `finder_stkisu` (종목 목록): 정상 동작 유지
+    - `MDCSTAT03502` (PER/PBR 날짜별): `400 LOGOUT` 응답 → **전 종목 펀더멘털 조회 불가**
+    - 익명 JSESSIONID(홈 방문)로는 해결 불가, 실제 로그인 세션 필요
+  - **변경**: `collect_fundamental()` 에서 pykrx 제거, KIS REST API 사용
+    - KIS `FHKST01010100` 트랜잭션 (`/uapi/domestic-stock/v1/quotations/inquire-price`)
+    - PER, PBR, EPS, BPS 조회 → ROE 계산 (`EPS / BPS * 100`)
+  - **싱글턴 패턴**: `_kis_client` 모듈 레벨 공유로 토큰 재사용 (Rate Limit 방지)
+  - pykrx는 **OHLCV 데이터 조회 전용**으로 역할 축소 (`collect_technical`에서만 사용)
+
+- ✅ **매매 신호 알럿 시스템** (`frontend/src/App.tsx`, `frontend/src/pages/SignalsDashboard.tsx`)
+  - 2분마다 백그라운드 폴링으로 신규 BUY 신호 감지
+  - 토스트 알럿 (화면 우상단 고정, 8초 자동 닫힘)
+  - 브라우저 Notification API 연동 (권한 허용 시 OS 알림)
+  - 알럿 클릭 시 매매신호 탭으로 이동 + 해당 신호 카드 스크롤
+
+#### 프론트엔드
+- ✅ **StocksDashboard 런타임 오류 수정** (`frontend/src/pages/StocksDashboard.tsx`)
+  - `Cannot read properties of undefined (reading 'toFixed')` 오류
+  - 펀더멘털 null 체크: `per`, `pbr`, `roe`, `eps`, `bps`
+  - 기술적 지표 null 체크: `rsi`, `volatility`, `return_60d`
+
+- ✅ **매매신호 탭 카드 UI 개선** (`frontend/src/pages/SignalsDashboard.tsx`)
+  - 종목 헤더: `종목명(종목코드)` 형식으로 표시
+  - 주가 표시: `[주가 : ###원]` - 별도 줄, bold + text-2xl 폰트
+  - `EntrySignal` 인터페이스에 `stock_info` 필드 추가 (`api.ts`)
+
+- ✅ **가격 조건 통화 분리** (`frontend/src/App.tsx`)
+  - 한국장: `1,000원 미만` + 입력란 원(₩) 단위
+  - 미국장: `$1 미만` + 입력란 달러($) 단위
+  - 시장 전환 시 가격 필터 자동 초기화
+
 ### v2.1.0 (2026-03-02)
 - ✅ RSI 골든크로스 전략 추가
 - ✅ Finviz 스크리너 통합 (47개 → 500개+)
@@ -684,6 +733,6 @@ async def get_combined_surge_stocks(limit: int = 100):
 
 ---
 
-**문서 작성일**: 2026년 3월 2일
-**버전**: 2.1.0
+**문서 최종 수정일**: 2026년 3월 4일
+**버전**: 2.3.0
 **작성자**: Claude Code (Anthropic)

@@ -37,7 +37,7 @@ class KISRestClient:
             logger.info("KIS access token obtained")
             return self._token
 
-    async def get_minute_chart(self, code: str, minute: int = 5) -> list[dict]:
+    async def get_minute_chart(self, code: str) -> list[dict]:
         """KIS REST API로 분봉 데이터 조회 (최대 30개)"""
         token = await self._get_token()
         headers = {
@@ -84,6 +84,57 @@ class KISRestClient:
 
         results.reverse()  # 시간 오름차순으로
         return results
+    async def get_kr_fundamental(self, code: str) -> dict:
+        """KIS REST API로 국내 주식 펀더멘털 데이터 조회 (PER, PBR, EPS, BPS)
+        tr_id: FHKST01010100 - 주식현재가 시세
+        FID_COND_MRKT_DIV_CODE=J : KOSPI/KOSDAQ 공통 코드
+        """
+        token = await self._get_token()
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHKST01010100",
+            "content-type": "application/json; charset=utf-8",
+        }
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": code,
+        }
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.get(
+                f"{self.BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
+                headers=headers,
+                params=params,
+            )
+            res.raise_for_status()
+            data = res.json()
+
+        if data.get("rt_cd") != "0":
+            logger.warning(f"[{code}] KIS fundamental error: {data.get('msg1')}")
+            return {}
+
+        out = data.get("output", {})
+        try:
+            per = float(out.get("per", 0) or 0)
+            pbr = float(out.get("pbr", 0) or 0)
+            eps = float(out.get("eps", 0) or 0)
+            bps = float(out.get("bps", 0) or 0)
+            roe = (eps / bps * 100) if bps > 0 else 0
+            return {
+                "per": per,
+                "pbr": pbr,
+                "roe": roe,
+                "eps": eps,
+                "bps": bps,
+                "eps_growth": 0,
+                "net_loss": eps < 0,
+                "high_debt": pbr > 3.0,
+            }
+        except (ValueError, TypeError) as e:
+            logger.error(f"[{code}] KIS fundamental parse error: {e}")
+            return {}
+
     async def get_volume_rank(self, max_price: int = 20000, limit: int = 100) -> list[dict]:
         """KIS REST API로 거래량 상위 급등주 조회"""
         token = await self._get_token()

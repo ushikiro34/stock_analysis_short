@@ -2,7 +2,7 @@
 
 A professional-grade stock analysis system for **day trading**, with automated signal generation, backtesting, and parameter optimization.
 
-> **최신 업데이트 (2026-03-02)**: 섹터 모니터링 시스템 추가! 10개 섹터 실시간 분석 및 로테이션 감지 ✨
+> **최신 업데이트 (2026-03-04)**: KIS REST API로 KR 급등주 연동 교체, UI 개선 (매매신호 종목명/주가 표시, 가격 조건 통화 분리) ✨
 
 ---
 
@@ -217,7 +217,8 @@ curl -X POST "http://localhost:8000/backtest/run" \
 - **Pydantic** - 데이터 검증 및 스키마
 - **pandas** - 데이터 분석
 - **yfinance** - 미국 주식 데이터
-- **pykrx** - 한국 주식 데이터
+- **KIS REST API** - 한국투자증권 Open API (KR 급등주 거래량 순위)
+- **pykrx** - 한국 주식 보조 데이터
 
 ### Analysis
 - **Technical Indicators**: RSI, MACD, Bollinger Bands, Stochastic
@@ -307,6 +308,8 @@ npm run dev
 - [x] Grid Search 최적화
 - [x] API 재구조화
 - [x] 섹터 모니터링 시스템 (2026-03-02)
+- [x] KIS REST API KR 급등주 연동 (2026-03-04)
+- [x] 프론트엔드 UI 개선 (2026-03-04)
 
 ### 🔍 조사 완료 (2026-03-02)
 - [x] **QNCX 누락 원인 분석**: Yahoo Finance 스크리너 API 한계
@@ -366,13 +369,34 @@ python test_optimizer.py
 
 ---
 
-**버전**: 2.1.0
-**최종 업데이트**: 2026-03-02
+**버전**: 2.2.0
+**최종 업데이트**: 2026-03-04
 **개발자**: Personal Stock Analysis System Team
 
 ---
 
 ## 📝 변경 이력
+
+### v2.2.0 (2026-03-04)
+- 🔄 **KIS REST API KR 급등주 연동 교체**
+  - pykrx/KRX 스크래핑 → KIS REST API (`FHPST01720000`) 교체
+  - KOSPI(`J`) + KOSDAQ(`Q`) 거래량 상위 종목 조회
+  - `change_rate` 기준 내림차순 정렬, 상승 종목만 반환
+  - `max_price` 필터 지원 (기본 20,000원 이하)
+  - KIS 토큰 23시간 캐싱으로 Rate Limit 방지
+- 🐛 **StocksDashboard 런타임 오류 수정**
+  - `Cannot read properties of undefined (reading 'toFixed')` 오류 해결
+  - 펀더멘털/기술적 지표 필드 전체 null 체크 추가
+    - 펀더멘털: `per`, `pbr`, `roe`, `eps`, `bps`
+    - 기술적: `rsi`, `volatility`, `return_60d`
+- ✨ **매매신호 탭 UI 개선**
+  - 신호 카드 헤더: `종목명(종목코드)` 형식으로 표시
+  - 주가 표시: `[주가 : ###원]` 형식, 볼드(bold) + 폰트 크기 2xl
+  - `EntrySignal` 인터페이스에 `stock_info` 필드 추가
+- ✨ **가격 조건 통화 분리 (UI)**
+  - 한국장: `1,000원 미만` 표시, 입력란에 `원` 단위 표시
+  - 미국장: `$1 미만` 표시, 입력란에 `$` 단위 표시
+  - 시장 전환 시 가격 필터 자동 초기화 (원/달러 혼용 방지)
 
 ### v2.1.0 (2026-03-02)
 - ✨ **섹터 모니터링 시스템 추가**

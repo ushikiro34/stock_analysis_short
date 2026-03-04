@@ -20,7 +20,8 @@ from .routers import (
     signals_router,
     backtest_router,
     optimize_router,
-    sectors_router
+    sectors_router,
+    paper_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,11 +47,13 @@ app.include_router(signals_router)
 app.include_router(backtest_router)
 app.include_router(optimize_router)
 app.include_router(sectors_router)
+app.include_router(paper_router)
 
 
 # ── Background Tasks ──────────────────────────────────────────
 collector_task: Optional[asyncio.Task] = None
 scorer_task: Optional[asyncio.Task] = None
+paper_task: Optional[asyncio.Task] = None
 
 # Global caches for background tasks
 _surge_cache: dict = {"data": [], "ts": 0}
@@ -102,6 +105,28 @@ async def run_scorer():
         await asyncio.sleep(300)
 
 
+async def run_paper_trading():
+    """5분 주기 페이퍼 트레이딩 루프"""
+    from ..core.paper_engine import paper_engine
+    from ..db.session import AsyncSessionLocal
+    await asyncio.sleep(20)   # 서버 시작 대기
+    # DB에서 이전 상태 복원
+    try:
+        async with AsyncSessionLocal() as db:
+            await paper_engine.load_from_db(db)
+    except Exception as e:
+        logger.error(f"Paper engine load error: {e}")
+    # 5분 루프
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                if paper_engine.is_running:
+                    await paper_engine.tick(db)
+        except Exception as e:
+            logger.error(f"Paper trading tick error: {e}")
+        await asyncio.sleep(300)
+
+
 @app.on_event("startup")
 async def on_startup():
     import os
@@ -110,10 +135,21 @@ async def on_startup():
     logger.info(f"KIS_APP_SECRET: {'SET' if os.getenv('KIS_APP_SECRET') else 'NOT SET'}")
     logger.info(f"DATABASE_URL: {'SET' if os.getenv('DATABASE_URL') else 'NOT SET'}")
 
-    global collector_task, scorer_task
+    # DB 테이블 자동 생성 (없는 경우에만, 기존 테이블은 유지)
+    try:
+        from ..db.session import engine, Base
+        from ..db import models as _db_models  # noqa: ORM 클래스를 Base.metadata에 등록
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("DB tables created/verified")
+    except Exception as e:
+        logger.error(f"DB table creation failed: {e}")
+
+    global collector_task, scorer_task, paper_task
     collector_task = asyncio.create_task(run_collector())
     scorer_task = asyncio.create_task(run_scorer())
-    logger.info(f"Background tasks started: collector={collector_task.get_name()}, scorer={scorer_task.get_name()}")
+    paper_task = asyncio.create_task(run_paper_trading())
+    logger.info(f"Background tasks started: collector, scorer, paper_trading")
 
 
 # ── WebSocket ────────────────────────────────────────────────

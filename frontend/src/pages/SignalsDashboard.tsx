@@ -16,13 +16,17 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
     const [error, setError] = useState<string | null>(null);
     const signalRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-    // 알럿에서 이동 시 해당 신호 카드로 스크롤
+    // 알럿에서 이동 시 해당 신호 카드로 스크롤 + 2.5초 하이라이트 유지
     useEffect(() => {
         if (!focusCode || loading || signals.length === 0) return;
         const el = signalRefs.current[focusCode];
         if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            onFocusDone?.();
+            // rAF: ref 연결 후 DOM이 완전히 정착된 시점에 스크롤
+            const raf = requestAnimationFrame(() => {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
+            const timer = setTimeout(() => onFocusDone?.(), 2500);
+            return () => { cancelAnimationFrame(raf); clearTimeout(timer); };
         }
     }, [focusCode, loading, signals]);
 

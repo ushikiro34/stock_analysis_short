@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle } from 'lucide-react';
 import type { Market } from './lib/api';
 import { scanSignals } from './lib/api';
 
@@ -8,8 +8,9 @@ import StocksDashboard from './pages/StocksDashboard';
 import SignalsDashboard from './pages/SignalsDashboard';
 import BacktestDashboard from './pages/BacktestDashboard';
 import OptimizeDashboard from './pages/OptimizeDashboard';
+import PaperTradingDashboard from './pages/PaperTradingDashboard';
 
-type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize';
+type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper';
 
 export type PriceFilter = 'all' | 'penny' | 'range';
 
@@ -45,15 +46,33 @@ function App() {
 
     const handleMarketChange = (m: Market) => {
         setMarket(m);
-        // 시장 변경 시 가격 필터 초기화 (원/달러 혼용 방지)
-        setStockFilter(f => ({ ...f, priceFilter: 'all', priceFrom: undefined, priceTo: undefined }));
+        // range일 때만 수치 초기화 (원/달러 혼용 방지), all/penny는 그대로 유지
+        setStockFilter(f => f.priceFilter === 'range'
+            ? { ...f, priceFrom: undefined, priceTo: undefined }
+            : f
+        );
     };
 
     // ── Signal Alert System ────────────────────────────────────
     const [alerts, setAlerts] = useState<SignalAlert[]>([]);
     const [focusSignalCode, setFocusSignalCode] = useState<string | undefined>();
+    const [pollError, setPollError] = useState(false);
+    const [showAlertPanel, setShowAlertPanel] = useState(false);
+    const bellWrapperRef = useRef<HTMLDivElement>(null);
     const seenKeysRef = useRef(new Set<string>());
     const isFirstPollRef = useRef(true);
+
+    // 벨 패널 외부 클릭 시 닫기
+    useEffect(() => {
+        if (!showAlertPanel) return;
+        const handleClick = (e: MouseEvent) => {
+            if (bellWrapperRef.current && !bellWrapperRef.current.contains(e.target as Node)) {
+                setShowAlertPanel(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [showAlertPanel]);
 
     const dismissAlert = (id: string) => setAlerts(prev => prev.filter(a => a.id !== id));
 
@@ -91,7 +110,7 @@ function App() {
                             market,
                             createdAt: Date.now(),
                         }));
-                        setAlerts(prev => [...newAlerts, ...prev].slice(0, 5));
+                        setAlerts(prev => [...newAlerts, ...prev].slice(0, 20));
                         newAlerts.forEach(alert => {
                             setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== alert.id)), 8000);
                         });
@@ -111,7 +130,8 @@ function App() {
                 }
                 data.forEach(s => seenKeysRef.current.add(`${s.code}-${s.timestamp}`));
                 isFirstPollRef.current = false;
-            } catch { /* 폴링 오류 무시 */ }
+            } catch { setPollError(true); return; }
+            setPollError(false);
         };
 
         poll();
@@ -129,7 +149,8 @@ function App() {
         { id: 'stocks' as Tab, label: '주식 분석', icon: Activity, color: 'text-blue-400' },
         { id: 'signals' as Tab, label: '매매 신호', icon: TrendingUp, color: 'text-green-400' },
         { id: 'backtest' as Tab, label: '백테스팅', icon: BarChart3, color: 'text-purple-400' },
-        { id: 'optimize' as Tab, label: '최적화', icon: Settings, color: 'text-orange-400' }
+        { id: 'optimize' as Tab, label: '최적화', icon: Settings, color: 'text-orange-400' },
+        { id: 'paper' as Tab, label: '모의투자', icon: PlayCircle, color: 'text-cyan-400' },
     ];
 
     return (
@@ -150,12 +171,68 @@ function App() {
 
                     {/* Notification Bell + Market Selector */}
                     <div className="flex items-center gap-3">
-                        <div className="relative">
-                            <Bell size={20} className={alerts.length > 0 ? 'text-green-400' : 'text-slate-500'} />
-                            {alerts.length > 0 && (
-                                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                                    {alerts.length}
-                                </span>
+                        <div ref={bellWrapperRef} className="relative">
+                            <button
+                                onClick={() => setShowAlertPanel(v => !v)}
+                                title={pollError ? '신호 폴링 실패 — 네트워크를 확인하세요' : '알림 목록'}
+                                className="relative p-1 rounded hover:bg-slate-700 transition-colors"
+                            >
+                                <Bell size={20} className={pollError ? 'text-red-400' : alerts.length > 0 ? 'text-green-400' : 'text-slate-500'} />
+                                {pollError && (
+                                    <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">!</span>
+                                )}
+                                {!pollError && alerts.length > 0 && (
+                                    <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                                        {alerts.length > 9 ? '9+' : alerts.length}
+                                    </span>
+                                )}
+                            </button>
+
+                            {/* 전체 알림 패널 */}
+                            {showAlertPanel && (
+                                <div className="absolute top-10 right-0 w-80 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl z-50 overflow-hidden">
+                                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+                                        <span className="text-sm font-semibold">신호 알림 {alerts.length}건</span>
+                                        <button
+                                            onClick={() => { setAlerts([]); setShowAlertPanel(false); }}
+                                            className="text-xs text-slate-400 hover:text-red-400 transition-colors"
+                                        >
+                                            모두 닫기
+                                        </button>
+                                    </div>
+                                    {alerts.length === 0 ? (
+                                        <div className="px-4 py-6 text-center text-sm text-slate-500">새 신호 없음</div>
+                                    ) : (
+                                        <div className="max-h-96 overflow-y-auto">
+                                            {alerts.map(alert => (
+                                                <div
+                                                    key={alert.id}
+                                                    className="flex items-center gap-3 px-4 py-3 border-b border-slate-700/50 hover:bg-slate-700/50 cursor-pointer transition-colors"
+                                                    onClick={() => { handleAlertClick(alert.code, alert.id); setShowAlertPanel(false); }}
+                                                >
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="font-semibold text-sm truncate">
+                                                            {alert.name ? `${alert.name}(${alert.code})` : alert.code}
+                                                        </div>
+                                                        <div className="text-xs text-slate-400 mt-0.5">
+                                                            점수: <span className="text-white font-bold">{alert.score.toFixed(0)}</span>
+                                                            {' · '}
+                                                            <span className={alert.strength === 'high' ? 'text-green-400' : alert.strength === 'medium' ? 'text-yellow-400' : 'text-slate-400'}>
+                                                                {alert.strength.toUpperCase()}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); dismissAlert(alert.id); }}
+                                                        className="text-slate-600 hover:text-slate-300 shrink-0 transition-colors"
+                                                    >
+                                                        <X size={14} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             )}
                         </div>
                         <div className="flex gap-2 bg-slate-800 rounded-lg p-1">
@@ -324,12 +401,13 @@ function App() {
                 )}
                 {activeTab === 'backtest' && <BacktestDashboard market={market} />}
                 {activeTab === 'optimize' && <OptimizeDashboard market={market} />}
+                {activeTab === 'paper' && <PaperTradingDashboard />}
             </main>
 
-            {/* Signal Alert Toasts */}
+            {/* Signal Alert Toasts — 최대 3개 표시, 초과분은 벨 패널로 안내 */}
             {alerts.length > 0 && (
                 <div className="fixed top-20 right-4 z-50 flex flex-col gap-2 w-72">
-                    {alerts.map(alert => (
+                    {alerts.slice(0, 3).map(alert => (
                         <div
                             key={alert.id}
                             className="bg-slate-800 border border-green-500/70 rounded-xl p-4 shadow-2xl cursor-pointer hover:border-green-400 transition-all"
@@ -362,7 +440,11 @@ function App() {
                                             {alert.strength.toUpperCase()}
                                         </span>
                                     </div>
-                                    <div className="text-xs text-slate-500 mt-1">탭하여 신호 확인 →</div>
+                                    <div className="mt-2">
+                                        <span className="inline-block text-xs font-semibold text-green-400 bg-green-400/10 border border-green-400/30 rounded px-2 py-0.5">
+                                            신호 보기 →
+                                        </span>
+                                    </div>
                                 </div>
                                 <button
                                     onClick={(e) => { e.stopPropagation(); dismissAlert(alert.id); }}
@@ -373,6 +455,14 @@ function App() {
                             </div>
                         </div>
                     ))}
+                    {alerts.length > 3 && (
+                        <button
+                            onClick={() => setShowAlertPanel(true)}
+                            className="text-center text-xs font-semibold text-green-400 bg-slate-800 border border-green-500/50 rounded-xl py-2 hover:border-green-400 transition-all"
+                        >
+                            +{alerts.length - 3}개 더 보기 →
+                        </button>
+                    )}
                 </div>
             )}
 

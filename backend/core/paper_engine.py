@@ -102,6 +102,8 @@ class PaperEngine:
         self.closed_today: int = 0
         self._daily_start_value: float = self.config.initial_capital
         self._daily_reset_date: Optional[str] = None
+        self._started_at: Optional[datetime] = None
+        self._elapsed_seconds: float = 0.0
 
     # ── 장 시간 체크 ─────────────────────────────────────────
 
@@ -394,17 +396,25 @@ class PaperEngine:
         if not self.is_running and not self.open_positions:
             self.cash = self.config.initial_capital
         self.is_running = True
+        from datetime import timezone
+        self._started_at = datetime.now(timezone.utc)
         await self._save_account(db)
         logger.info(f"[Paper] 시뮬레이션 시작: capital={self.config.initial_capital:,.0f}, market={self.config.market}")
 
     async def stop(self, db: AsyncSession) -> None:
         self.is_running = False
+        if self._started_at:
+            from datetime import timezone
+            self._elapsed_seconds += (datetime.now(timezone.utc) - self._started_at).total_seconds()
+            self._started_at = None
         await self._save_account(db)
         logger.info("[Paper] 시뮬레이션 중지")
 
     async def reset(self, db: AsyncSession) -> None:
         from ..db.models import PaperTrade, PaperPortfolioHistory
         self.is_running = False
+        self._started_at = None
+        self._elapsed_seconds = 0.0
         self.open_positions = []
         self.cash = self.config.initial_capital
         self.closed_today = 0
@@ -433,6 +443,8 @@ class PaperEngine:
             "roi": round(roi, 2),
             "open_count": len(self.open_positions),
             "closed_today": self.closed_today,
+            "started_at": self._started_at.isoformat() if self._started_at else None,
+            "elapsed_seconds": int(self._elapsed_seconds),
         }
 
     def get_positions(self) -> list:

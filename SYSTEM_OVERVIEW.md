@@ -6,7 +6,8 @@
 3. [매매 신호 전략](#매매-신호-전략)
 4. [청산 전략](#청산-전략)
 5. [스크리너 전략 (Finviz)](#스크리너-전략-finviz)
-6. [API 엔드포인트 요약](#api-엔드포인트-요약)
+6. [모의투자 시뮬레이션](#모의투자-시뮬레이션-paper-trading)
+7. [API 엔드포인트 요약](#api-엔드포인트-요약)
 
 ---
 
@@ -557,6 +558,76 @@ async def get_combined_surge_stocks(limit: int = 100):
 
 ---
 
+## 모의투자 시뮬레이션 (Paper Trading)
+
+실시간 KIS 데이터 기반 가상 자동매매 시뮬레이션. 실제 주문 없이 리얼 데이터로 전략을 자동 테스트.
+
+### 📍 관련 파일
+
+| 파일 | 역할 |
+|---|---|
+| `backend/db/models.py` | PaperAccount, PaperTrade, PaperPortfolioHistory ORM 모델 |
+| `backend/core/paper_engine.py` | 싱글턴 엔진 (PaperEngine) |
+| `backend/api/routers/paper_trading.py` | REST API 라우터 (`/paper/*`) |
+| `frontend/src/pages/PaperTradingDashboard.tsx` | 모의투자 탭 UI |
+
+### 🔄 tick() 자동 루프 (5분 주기)
+
+```
+on_startup → run_paper_trading() (백그라운드 태스크)
+    ↓ 5분마다
+    paper_engine.tick(db)
+        1. 장 시간 체크 (KST 09:00~15:20, 평일만 실행)
+        2. 오픈 포지션 현재가 조회 (KIS get_minute_chart)
+           → _check_exit() → 청산 조건 충족 시 _do_close()
+        3. 포지션 여유 있으면 _scan_and_buy()
+           → get_volume_rank(limit=50) → name_map 구성
+           → generate_entry_signals_bulk(codes[:30], ...)
+           → BUY 신호 중 score ≥ min_score → _do_open()
+        4. _record_portfolio() → DB 이력 기록
+        5. _save_account() → DB 계좌 저장
+```
+
+### 🛡️ 청산 조건 (_check_exit)
+
+| 조건 | 기준 |
+|---|---|
+| 익절 1차 | +3% |
+| 익절 2차 | +5% |
+| 익절 3차 | +10% |
+| 고정 손절 | -2% |
+| 트레일링 스톱 | 최고가 대비 -3% (최고가 경신 후) |
+| 시간 제한 | 120시간(5일) 초과 |
+
+### 🗄️ DB 모델
+
+**PaperAccount** (단일 행, id=1 고정)
+- 설정: initial_capital, cash, is_running, market, strategy, min_score, max_positions, position_size_pct
+
+**PaperTrade**
+- 거래 기록: code, name, entry_time/price, exit_time/price, quantity, highest_price, entry_score
+- status: `OPEN` / `CLOSED`
+- exit_reason: `1차 익절 +3%` / `fixed_stop_loss` / `trailing_stop` / `time_limit_120h`
+
+**PaperPortfolioHistory**
+- 포트폴리오 가치 이력: recorded_at, total_value, cash, position_value
+
+### ⏱️ 스탑워치 (프론트엔드)
+
+```
+중지 버튼 왼쪽에 항상 표시
+- 실행 중:  elapsed_seconds(누적) + (now - started_at) → 1초마다 카운트 [cyan]
+- 중지 후:  elapsed_seconds 정적 표시 (누적 시간 유지) [회색]
+- 초기화 후: 00:00:00 [회색]
+- 재시작:   이전 누적 시간에 이어서 카운트
+```
+
+백엔드 `get_status()` 응답:
+- `started_at`: 현재 실행 구간 시작 시각 (UTC ISO 8601), 중지 시 null
+- `elapsed_seconds`: 누적 경과 초 (중지 후에도 유지, 초기화 시만 0)
+
+---
+
 ## API 엔드포인트 요약
 
 ### 📊 Stocks API
@@ -594,6 +665,26 @@ async def get_combined_surge_stocks(limit: int = 100):
 |----------|--------|------|
 | `/backtest/run` | POST | 백테스팅 실행 |
 
+### 📄 Paper Trading API
+
+| 엔드포인트 | Method | 설명 |
+|----------|--------|------|
+| `/paper/start` | POST | 시뮬레이션 시작 (StartConfig body) |
+| `/paper/stop` | POST | 시뮬레이션 중지 |
+| `/paper/reset` | POST | 전체 초기화 (포지션·거래·이력 삭제) |
+| `/paper/status` | GET | 계좌 현황 (started_at, elapsed_seconds 포함) |
+| `/paper/positions` | GET | 현재 오픈 포지션 목록 |
+| `/paper/trades?limit=50` | GET | 체결 거래 내역 |
+| `/paper/history?limit=200` | GET | 포트폴리오 가치 이력 |
+
+**StartConfig 파라미터**:
+- `initial_capital`: 초기자본 (기본 1000만원)
+- `market`: `KR` / `US`
+- `strategy`: `combined` / `volume` / `technical` / `rsi_golden_cross`
+- `min_score`: 최소 진입 점수 (기본 65)
+- `max_positions`: 최대 동시 보유 종목 수 (기본 3)
+- `position_size_pct`: 종목당 투자 비율 (기본 0.3 = 30%)
+
 ---
 
 ## 시스템 구조 다이어그램
@@ -603,10 +694,10 @@ async def get_combined_surge_stocks(limit: int = 100):
 │                     Frontend (React + Vite)                  │
 │                     http://localhost:5173                    │
 │                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │ Stocks       │  │ Signals      │  │ Backtest     │     │
-│  │ Dashboard    │  │ Dashboard    │  │ Dashboard    │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐     │
+│  │ Stocks   │ │ Signals  │ │ Backtest │ │ Paper    │     │
+│  │ Dashboard│ │ Dashboard│ │ Dashboard│ │ Trading  │     │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘     │
 │           │                 │                 │             │
 │           └─────────────────┴─────────────────┘             │
 │                           │                                 │
@@ -619,12 +710,13 @@ async def get_combined_surge_stocks(limit: int = 100):
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │               API Routers                            │   │
-│  │  • /stocks   • /signals   • /backtest               │   │
+│  │  • /stocks   • /signals   • /backtest   • /paper     │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                           │                                 │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │               Core Services                          │   │
 │  │  • score_service     • signal_service               │   │
+│  │  • paper_engine (PaperEngine 싱글턴)                │   │
 │  │  • signals (4 strategies + manager)                 │   │
 │  │  • indicators (RSI, MACD, MA, BB)                   │   │
 │  └─────────────────────────────────────────────────────┘   │
@@ -650,30 +742,93 @@ async def get_combined_surge_stocks(limit: int = 100):
 ## 핵심 파일 위치
 
 ### Frontend
-- **App.tsx**: 메인 앱, 마켓 선택, 필터 UI
+- **App.tsx**: 메인 앱, 마켓 선택, 탭 라우팅, 신호 알림 시스템 (bell icon + toast)
 - **pages/StocksDashboard.tsx**: 주식 리스트, 차트, 점수 표시
-- **pages/SignalsDashboard.tsx**: 매매 신호 대시보드
+- **pages/SignalsDashboard.tsx**: 매매 신호 대시보드 (focusCode/onFocusDone, rAF 스크롤)
 - **pages/BacktestDashboard.tsx**: 백테스팅 대시보드
+- **pages/OptimizeDashboard.tsx**: 파라미터 최적화 대시보드
+- **pages/PaperTradingDashboard.tsx**: 모의투자 시뮬레이션 대시보드 ⭐ NEW
 
 ### Backend - API
+- **api/main.py**: FastAPI 앱, 라우터 등록, DB create_all, 백그라운드 태스크
 - **api/routers/stocks.py**: 주식 데이터 API (급등주, 차트, 점수)
 - **api/routers/signals.py**: 매매 신호 API
 - **api/routers/backtest.py**: 백테스팅 API
+- **api/routers/paper_trading.py**: 모의투자 API (`/paper/*`) ⭐ NEW
 
 ### Backend - Core
 - **core/signals.py**: 4대 진입 전략 + 3대 청산 전략
-- **core/signal_service.py**: 신호 생성 서비스
+- **core/signal_service.py**: 신호 생성 서비스 (generate_entry_signal, generate_entry_signals_bulk)
 - **core/score_service.py**: 종목 점수 계산
 - **core/indicators.py**: 기술적 지표 엔진
+- **core/paper_engine.py**: 모의투자 엔진 싱글턴 ⭐ NEW
+
+### Backend - DB
+- **db/session.py**: DB 엔진, AsyncSessionLocal, Base, get_db
+- **db/models.py**: ORM 모델 (Stock, OHLCV1m 등 + PaperAccount, PaperTrade, PaperPortfolioHistory)
 
 ### Backend - Data Sources
-- **kis/rest_client.py**: 한국투자증권 API (KR)
+- **kis/rest_client.py**: 한국투자증권 REST API (급등주, 분봉, 펀더멘털)
 - **us/yfinance_client.py**: Yahoo Finance (US)
 - **us/finviz_screener.py**: Finviz 스크리너 (US)
 
 ---
 
 ## 변경 이력
+
+### v2.3.0 (2026-03-05)
+
+#### 모의투자 시뮬레이션 신규 구현
+
+- ✅ **DB 모델 추가** (`backend/db/models.py`)
+  - `PaperAccount`: 설정/상태 저장 (id=1 고정 단일 행)
+  - `PaperTrade`: 거래 기록 (OPEN/CLOSED status)
+  - `PaperPortfolioHistory`: 포트폴리오 가치 이력
+
+- ✅ **DB 테이블 자동 생성** (`backend/api/main.py`)
+  - `on_startup`에 `Base.metadata.create_all` 추가
+  - 서버 시작 시 누락된 테이블 자동 생성 (기존 테이블 유지)
+  - 모델 등록을 위해 `from ..db import models` 임포트 필수
+
+- ✅ **PaperEngine 싱글턴** (`backend/core/paper_engine.py`)
+  - 5분 주기 자동 루프: 장 시간 체크 → 청산 → 매수 → DB 기록
+  - backtest/engine.py의 청산 로직 직접 이식 (`_check_exit`)
+  - `get_volume_rank`로 스캔 대상 확보, name_map으로 한국어 종목명 매핑
+  - `generate_entry_signals_bulk`으로 BUY 신호 필터링
+  - 스탑워치용 `_started_at` / `_elapsed_seconds` 분리 관리:
+    - `stop()`: `_elapsed_seconds += 경과시간`, `_started_at = None`
+    - `reset()`: `_elapsed_seconds = 0.0`, `_started_at = None`
+    - `start()`: `_started_at = now()`, `_elapsed_seconds` 유지 (누적)
+
+- ✅ **Paper Trading API 라우터** (`backend/api/routers/paper_trading.py`)
+  - `POST /paper/start|stop|reset`
+  - `GET /paper/status|positions|trades|history`
+  - `get_status()` 응답에 `started_at`, `elapsed_seconds` 포함
+
+- ✅ **모의투자 대시보드** (`frontend/src/pages/PaperTradingDashboard.tsx`)
+  - lightweight-charts로 포트폴리오 가치 선 차트 (초기자본 기준선 포함)
+  - 설정 폼: 초기자본, 전략, 최소점수, 최대보유수, 투자비율
+  - 계좌 요약 4카드, 오픈 포지션 패널, 거래 내역 패널
+  - 30초 자동 새로고침
+
+- ✅ **스탑워치 컴포넌트** (`PaperTradingDashboard.tsx`)
+  - 중지 버튼 왼쪽에 상시 표시 (00:00:00 ~ HH:MM:SS)
+  - `elapsed_seconds`(누적 기반) + `started_at`(현재 구간) 조합
+  - 실행 중: 1초마다 카운트 (cyan), 중지 후: 정적 표시 (회색)
+  - 초기화 버튼 클릭 시에만 00:00:00 리셋
+
+- ✅ **App.tsx 탭 추가**
+  - `'paper'` 탭: PlayCircle 아이콘, cyan 색상, '모의투자' 레이블
+
+- ✅ **api.ts 인터페이스 추가**
+  - `PaperStatus`, `PaperPosition`, `PaperTrade`, `PaperHistoryPoint`, `PaperStartConfig`
+  - `paperTrading` 객체: start/stop/reset/getStatus/getPositions/getTrades/getHistory
+
+#### 신호 알림 시스템 개선 (이전 v2.2.0에서 계속)
+
+- ✅ **Toast "신호 보기" 버튼**: 클릭 시 신호 탭 이동 + 해당 카드 자동 스크롤
+- ✅ **Bell 패널**: 최근 신호 목록, click-outside 닫힘, 폴링 실패 시 빨간색 + `!` 배지
+- ✅ **SignalsDashboard**: `requestAnimationFrame` 스크롤 타이밍 안정화, 2.5초 하이라이트
 
 ### v2.2.0 (2026-03-04)
 
@@ -733,6 +888,6 @@ async def get_combined_surge_stocks(limit: int = 100):
 
 ---
 
-**문서 최종 수정일**: 2026년 3월 4일
+**문서 최종 수정일**: 2026년 3월 5일
 **버전**: 2.3.0
 **작성자**: Claude Code (Anthropic)

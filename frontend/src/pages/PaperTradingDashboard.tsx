@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2 } from 'lucide-react';
+import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2, Timer } from 'lucide-react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
 import { paperTrading, type PaperStatus, type PaperPosition, type PaperTrade, type PaperHistoryPoint, type PaperStartConfig } from '../lib/api';
 
@@ -33,6 +33,39 @@ function ExitReasonLabel({ reason }: { reason: string | null }) {
     };
     const info = map[reason] ?? { label: reason, color: 'text-slate-400' };
     return <span className={`text-xs font-semibold ${info.color}`}>{info.label}</span>;
+}
+
+function Stopwatch({ startedAt, elapsedSeconds }: { startedAt: string | null; elapsedSeconds: number }) {
+    // extra: 현재 구간에서 추가된 실시간 초 (실행 중에만 증가)
+    const [extra, setExtra] = useState(0);
+
+    useEffect(() => {
+        if (!startedAt) {
+            setExtra(0);
+            return;
+        }
+        const origin = new Date(startedAt).getTime();
+        const update = () => setExtra(Math.max(0, Math.floor((Date.now() - origin) / 1000)));
+        update();
+        const id = setInterval(update, 1000);
+        return () => clearInterval(id);
+    }, [startedAt]);
+
+    const total = elapsedSeconds + extra;
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const fmt = (n: number) => String(n).padStart(2, '0');
+    const active = !!startedAt;
+
+    return (
+        <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg">
+            <Timer size={14} className={active ? 'text-cyan-400' : 'text-slate-500'} />
+            <span className={`font-mono text-sm tracking-widest ${active ? 'text-cyan-300' : 'text-slate-400'}`}>
+                {fmt(h)}:{fmt(m)}:{fmt(s)}
+            </span>
+        </div>
+    );
 }
 
 export default function PaperTradingDashboard() {
@@ -175,6 +208,10 @@ export default function PaperTradingDashboard() {
 
                 {/* 컨트롤 버튼 */}
                 <div className="flex items-center gap-2">
+                    <Stopwatch
+                        startedAt={status?.is_running ? (status.started_at ?? null) : null}
+                        elapsedSeconds={status?.elapsed_seconds ?? 0}
+                    />
                     {!status?.is_running ? (
                         <button
                             onClick={handleStart}

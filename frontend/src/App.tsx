@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
-import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle } from 'lucide-react';
-import type { Market } from './lib/api';
-import { scanSignals } from './lib/api';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2 } from 'lucide-react';
+import type { Market, LogEntry, MonitorStatus } from './lib/api';
+import { scanSignals, monitor } from './lib/api';
 
 // Import page components
 import StocksDashboard from './pages/StocksDashboard';
@@ -139,6 +139,70 @@ function App() {
         return () => clearInterval(interval);
     }, [market]);
 
+    // ── Monitor Panel ──────────────────────────────────────────
+    const [showMonitor, setShowMonitor] = useState(false);
+    const [monitorLogs, setMonitorLogs] = useState<LogEntry[]>([]);
+    const [monitorStatus, setMonitorStatus] = useState<MonitorStatus | null>(null);
+    const [monitorLevel, setMonitorLevel] = useState<'DEBUG' | 'INFO' | 'WARNING' | 'ERROR'>('INFO');
+    const [monitorLoading, setMonitorLoading] = useState(false);
+    const logsEndRef = useRef<HTMLDivElement>(null);
+    const monitorPanelRef = useRef<HTMLDivElement>(null);
+
+    const fetchMonitorData = useCallback(async () => {
+        setMonitorLoading(true);
+        try {
+            const [logs, status] = await Promise.all([
+                monitor.getLogs(monitorLevel, 200),
+                monitor.getStatus(),
+            ]);
+            setMonitorLogs(logs);
+            setMonitorStatus(status);
+        } catch { /* silent */ }
+        setMonitorLoading(false);
+    }, [monitorLevel]);
+
+    useEffect(() => {
+        if (!showMonitor) return;
+        fetchMonitorData();
+        const iv = setInterval(fetchMonitorData, 5000);
+        return () => clearInterval(iv);
+    }, [showMonitor, fetchMonitorData]);
+
+    // 자동 스크롤
+    useEffect(() => {
+        if (showMonitor) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [monitorLogs, showMonitor]);
+
+    // 외부 클릭시 닫기
+    useEffect(() => {
+        if (!showMonitor) return;
+        const handleClick = (e: MouseEvent) => {
+            if (monitorPanelRef.current && !monitorPanelRef.current.contains(e.target as Node)) {
+                setShowMonitor(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [showMonitor]);
+
+    const handleClearLogs = async () => {
+        await monitor.clearLogs();
+        setMonitorLogs([]);
+    };
+
+    const taskColor = (status: string) => {
+        if (status === 'running') return 'text-green-400';
+        if (status === 'not_started') return 'text-slate-500';
+        return 'text-red-400';
+    };
+
+    const logLevelColor = (level: string) => {
+        if (level === 'ERROR') return 'text-red-400';
+        if (level === 'WARNING') return 'text-yellow-400';
+        if (level === 'INFO') return 'text-green-400';
+        return 'text-slate-500';
+    };
+
     // 종목명 검색 - 엔터 또는 조회 버튼으로만 실행
     const [stockNameInput, setStockNameInput] = useState('');
     const handleStockNameSearch = () => {
@@ -169,8 +233,92 @@ function App() {
                         </div>
                     </div>
 
-                    {/* Notification Bell + Market Selector */}
+                    {/* Notification Bell + Monitor + Market Selector */}
                     <div className="flex items-center gap-3">
+                        {/* Monitor Button */}
+                        <div ref={monitorPanelRef} className="relative">
+                            <button
+                                onClick={() => setShowMonitor(v => !v)}
+                                title="서버 모니터링"
+                                className="relative p-1 rounded hover:bg-slate-700 transition-colors"
+                            >
+                                <Terminal size={20} className={showMonitor ? 'text-cyan-400' : 'text-slate-500'} />
+                            </button>
+
+                            {/* Monitor Panel */}
+                            {showMonitor && (
+                                <div className="absolute top-10 right-0 w-[560px] bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden" style={{ maxHeight: '520px' }}>
+                                    {/* Header */}
+                                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+                                        <div className="flex items-center gap-3">
+                                            <Terminal size={14} className="text-cyan-400" />
+                                            <span className="text-sm font-semibold text-cyan-400">서버 모니터</span>
+                                            {monitorStatus && (
+                                                <span className="text-xs text-slate-400">
+                                                    uptime {Math.floor(monitorStatus.uptime_seconds / 60)}m
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={fetchMonitorData} title="새로고침" className="p-1 hover:text-white text-slate-400 transition-colors">
+                                                <RefreshCw size={13} className={monitorLoading ? 'animate-spin' : ''} />
+                                            </button>
+                                            <button onClick={handleClearLogs} title="로그 지우기" className="p-1 hover:text-red-400 text-slate-400 transition-colors">
+                                                <Trash2 size={13} />
+                                            </button>
+                                            <button onClick={() => setShowMonitor(false)} className="p-1 hover:text-white text-slate-400 transition-colors">
+                                                <X size={13} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Task Status */}
+                                    {monitorStatus && (
+                                        <div className="flex items-center gap-4 px-4 py-2 border-b border-slate-700/60 bg-slate-800/50 shrink-0 text-xs">
+                                            {Object.entries(monitorStatus.tasks).map(([name, st]) => (
+                                                <div key={name} className="flex items-center gap-1.5">
+                                                    <span className={`w-1.5 h-1.5 rounded-full ${st === 'running' ? 'bg-green-400' : st === 'not_started' ? 'bg-slate-500' : 'bg-red-400'}`} />
+                                                    <span className="text-slate-400">{name}</span>
+                                                    <span className={taskColor(st)}>{st}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* Level Filter */}
+                                    <div className="flex items-center gap-1 px-4 py-2 border-b border-slate-700/60 shrink-0">
+                                        {(['DEBUG', 'INFO', 'WARNING', 'ERROR'] as const).map(lv => (
+                                            <button
+                                                key={lv}
+                                                onClick={() => setMonitorLevel(lv)}
+                                                className={`px-2 py-0.5 rounded text-xs font-mono transition-colors ${monitorLevel === lv ? 'bg-slate-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                                            >
+                                                {lv}
+                                            </button>
+                                        ))}
+                                        <span className="ml-auto text-xs text-slate-600">{monitorLogs.length}줄</span>
+                                    </div>
+
+                                    {/* Log Output */}
+                                    <div className="flex-1 overflow-y-auto font-mono text-xs p-3 space-y-0.5 bg-slate-950">
+                                        {monitorLogs.length === 0 ? (
+                                            <div className="text-slate-600 text-center py-8">로그 없음</div>
+                                        ) : (
+                                            monitorLogs.map((log, i) => (
+                                                <div key={i} className="flex gap-2 leading-5">
+                                                    <span className="text-slate-600 shrink-0">{log.ts}</span>
+                                                    <span className={`shrink-0 w-14 ${logLevelColor(log.level)}`}>{log.level}</span>
+                                                    <span className="text-slate-500 shrink-0 w-20 truncate">{log.logger}</span>
+                                                    <span className="text-slate-300 break-all">{log.msg}</span>
+                                                </div>
+                                            ))
+                                        )}
+                                        <div ref={logsEndRef} />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
                         <div ref={bellWrapperRef} className="relative">
                             <button
                                 onClick={() => setShowAlertPanel(v => !v)}
@@ -391,17 +539,25 @@ function App() {
 
             {/* Main Content Area */}
             <main className="flex-1 overflow-hidden p-6">
-                {activeTab === 'stocks' && <StocksDashboard market={market} filter={stockFilter} />}
-                {activeTab === 'signals' && (
+                <div className={`h-full ${activeTab === 'stocks' ? '' : 'hidden'}`}>
+                    <StocksDashboard market={market} filter={stockFilter} />
+                </div>
+                <div className={`h-full ${activeTab === 'signals' ? '' : 'hidden'}`}>
                     <SignalsDashboard
                         market={market}
                         focusCode={focusSignalCode}
                         onFocusDone={() => setFocusSignalCode(undefined)}
                     />
-                )}
-                {activeTab === 'backtest' && <BacktestDashboard market={market} />}
-                {activeTab === 'optimize' && <OptimizeDashboard market={market} />}
-                {activeTab === 'paper' && <PaperTradingDashboard />}
+                </div>
+                <div className={`h-full ${activeTab === 'backtest' ? '' : 'hidden'}`}>
+                    <BacktestDashboard market={market} />
+                </div>
+                <div className={`h-full ${activeTab === 'optimize' ? '' : 'hidden'}`}>
+                    <OptimizeDashboard market={market} />
+                </div>
+                <div className={`h-full ${activeTab === 'paper' ? '' : 'hidden'}`}>
+                    <PaperTradingDashboard />
+                </div>
             </main>
 
             {/* Signal Alert Toasts — 최대 3개 표시, 초과분은 벨 패널로 안내 */}

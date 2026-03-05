@@ -77,7 +77,7 @@ class PaperPosition:
             "code": self.code,
             "name": self.name,
             "market": self.market,
-            "entry_time": self.entry_time.isoformat(),
+            "entry_time": self.entry_time.isoformat() + 'Z',  # UTC naive → UTC 명시
             "entry_price": self.entry_price,
             "quantity": self.quantity,
             "highest_price": self.highest_price,
@@ -463,9 +463,9 @@ class PaperEngine:
                 "code": r.code,
                 "name": r.name,
                 "market": r.market,
-                "entry_time": r.entry_time.isoformat() if r.entry_time else None,
+                "entry_time": (r.entry_time.isoformat() + 'Z') if r.entry_time else None,
                 "entry_price": r.entry_price,
-                "exit_time": r.exit_time.isoformat() if r.exit_time else None,
+                "exit_time": (r.exit_time.isoformat() + 'Z') if r.exit_time else None,
                 "exit_price": r.exit_price,
                 "exit_reason": r.exit_reason,
                 "quantity": r.quantity,
@@ -485,7 +485,7 @@ class PaperEngine:
         rows = result.scalars().all()
         return [
             {
-                "recorded_at": r.recorded_at.isoformat() if r.recorded_at else None,
+                "recorded_at": (r.recorded_at.isoformat() + 'Z') if r.recorded_at else None,
                 "total_value": r.total_value,
                 "cash": r.cash,
                 "position_value": r.position_value,

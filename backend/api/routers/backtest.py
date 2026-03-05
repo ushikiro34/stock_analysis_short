@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from typing import List
 from datetime import datetime, timedelta
 import logging
+import math
 
 from ...backtest.engine import BacktestConfig, run_simple_backtest
 from ...backtest.analytics import PerformanceAnalytics, compare_strategies
@@ -17,6 +18,26 @@ router = APIRouter(prefix="/backtest", tags=["📈 Backtest"])
 
 # 백테스트 캐시
 _backtest_cache: dict = {}
+
+
+def _sanitize_json(obj):
+    """
+    NaN/Inf, numpy scalar, pandas.Timestamp 등 비직렬화 타입을 JSON 안전한 타입으로 변환.
+    FastAPI JSONResponse는 allow_nan=False이므로 핸들러 내부에서 먼저 정리해야 한다.
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_json(v) for v in obj]
+    if hasattr(obj, 'isoformat'):          # datetime / pandas.Timestamp
+        return obj.isoformat()
+    if hasattr(obj, 'item'):               # numpy scalar → Python native
+        return _sanitize_json(obj.item())
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    return obj
 
 
 @router.post("/run")
@@ -58,7 +79,8 @@ async def run_backtest(request: BacktestRequest):
         # 향상된 분석 리포트 생성
         enhanced_result = PerformanceAnalytics.generate_enhanced_report(result)
 
-        return enhanced_result
+        # NaN/Inf/numpy scalar/pandas.Timestamp → JSON 안전한 타입으로 변환
+        return _sanitize_json(enhanced_result)
 
     except Exception as e:
         logger.error(f"Backtest error: {e}")
@@ -123,10 +145,10 @@ async def compare_backtest_strategies(
         # 전략 비교
         comparison = compare_strategies(results)
 
-        return {
+        return _sanitize_json({
             "comparison": comparison,
             "details": results
-        }
+        })
 
     except Exception as e:
         logger.error(f"Strategy comparison error: {e}")

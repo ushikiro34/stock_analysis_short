@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2, Timer } from 'lucide-react';
+import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2, Timer, X, Info } from 'lucide-react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
 import { paperTrading, type PaperStatus, type PaperPosition, type PaperTrade, type PaperHistoryPoint, type PaperStartConfig } from '../lib/api';
 
@@ -20,6 +20,99 @@ const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
 function PnlBadge({ pct }: { pct: number }) {
     const color = pct > 0 ? 'text-green-400' : pct < 0 ? 'text-red-400' : 'text-slate-400';
     return <span className={`font-bold ${color}`}>{fmtPct(pct)}</span>;
+}
+
+function TradeDetailModal({ trade, onClose }: { trade: PaperTrade; onClose: () => void }) {
+    const totalBuy = trade.entry_price * trade.quantity;
+    const totalSell = trade.exit_price != null ? trade.exit_price * trade.quantity : null;
+    const isProfit = trade.profit_loss >= 0;
+
+    const exitLabel = (() => {
+        if (!trade.exit_reason) return '청산가';
+        if (trade.exit_reason === 'fixed_stop_loss' || trade.exit_reason === 'trailing_stop') return '손절가';
+        if (trade.exit_reason.includes('익절')) return '익절가';
+        return '청산가';
+    })();
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={onClose}
+        >
+            <div
+                className="relative w-[480px] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-6"
+                onClick={e => e.stopPropagation()}
+            >
+                {/* 헤더 */}
+                <div className="flex items-start justify-between mb-5">
+                    <div>
+                        <div className="text-lg font-bold">{trade.name}</div>
+                        <div className="text-sm text-slate-400 mt-0.5">
+                            {trade.code} &middot; {trade.market}
+                            {trade.exit_reason && (
+                                <span className="ml-2">
+                                    <ExitReasonLabel reason={trade.exit_reason} />
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                {/* 손익 배지 */}
+                <div className={`rounded-xl p-4 mb-5 text-center ${isProfit ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
+                    <div className={`text-3xl font-bold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                        {isProfit ? '+' : ''}{trade.profit_loss.toLocaleString('ko-KR')}원
+                    </div>
+                    <div className={`text-sm mt-1 ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                        {isProfit ? '+' : ''}{trade.profit_loss_pct.toFixed(2)}%
+                    </div>
+                </div>
+
+                {/* 상세 정보 그리드 */}
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="bg-slate-800/60 rounded-lg p-3">
+                        <div className="text-xs text-slate-500 mb-1">시작 시간</div>
+                        <div className="font-mono text-slate-200 text-xs">
+                            {trade.entry_time ? new Date(trade.entry_time).toLocaleString('ko-KR') : '-'}
+                        </div>
+                    </div>
+                    <div className="bg-slate-800/60 rounded-lg p-3">
+                        <div className="text-xs text-slate-500 mb-1">종료 시간</div>
+                        <div className="font-mono text-slate-200 text-xs">
+                            {trade.exit_time ? new Date(trade.exit_time).toLocaleString('ko-KR') : '-'}
+                        </div>
+                    </div>
+                    <div className="bg-slate-800/60 rounded-lg p-3">
+                        <div className="text-xs text-slate-500 mb-1">1주당 매입가</div>
+                        <div className="font-bold text-blue-300">{trade.entry_price.toLocaleString('ko-KR')}원</div>
+                    </div>
+                    <div className="bg-slate-800/60 rounded-lg p-3">
+                        <div className="text-xs text-slate-500 mb-1">1주당 {exitLabel}</div>
+                        <div className={`font-bold ${isProfit ? 'text-green-300' : 'text-red-300'}`}>
+                            {trade.exit_price != null ? trade.exit_price.toLocaleString('ko-KR') + '원' : '-'}
+                        </div>
+                    </div>
+                    <div className="bg-slate-800/60 rounded-lg p-3">
+                        <div className="text-xs text-slate-500 mb-1">총 주식 수</div>
+                        <div className="font-bold text-slate-200">{trade.quantity.toLocaleString('ko-KR')}주</div>
+                    </div>
+                    <div className="bg-slate-800/60 rounded-lg p-3">
+                        <div className="text-xs text-slate-500 mb-1">총 매입가</div>
+                        <div className="font-bold text-slate-200">{totalBuy.toLocaleString('ko-KR')}원</div>
+                    </div>
+                    <div className="bg-slate-800/60 rounded-lg p-3 col-span-2">
+                        <div className="text-xs text-slate-500 mb-1">총 판매가</div>
+                        <div className={`font-bold text-lg ${isProfit ? 'text-green-300' : 'text-red-300'}`}>
+                            {totalSell != null ? totalSell.toLocaleString('ko-KR') + '원' : '-'}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
 }
 
 function ExitReasonLabel({ reason }: { reason: string | null }) {
@@ -77,6 +170,7 @@ export default function PaperTradingDashboard() {
     const [actionLoading, setActionLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [config, setConfig] = useState<PaperStartConfig>(DEFAULT_CONFIG);
+    const [selectedTrade, setSelectedTrade] = useState<PaperTrade | null>(null);
 
     const fetchAll = useCallback(async () => {
         try {
@@ -192,6 +286,10 @@ export default function PaperTradingDashboard() {
     );
 
     return (
+        <>
+        {selectedTrade && (
+            <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
+        )}
         <div className="h-full flex flex-col gap-5 overflow-y-auto">
 
             {/* ── 헤더 ───────────────────────────────────────── */}
@@ -363,11 +461,16 @@ export default function PaperTradingDashboard() {
                     ) : (
                         <div className="space-y-2 max-h-72 overflow-y-auto">
                             {trades.map(t => (
-                                <div key={t.id} className="flex items-center justify-between bg-slate-900/50 rounded-lg px-3 py-2">
+                                <div
+                                    key={t.id}
+                                    onClick={() => setSelectedTrade(t)}
+                                    className="flex items-center justify-between bg-slate-900/50 hover:bg-slate-700/50 rounded-lg px-3 py-2 cursor-pointer transition-colors group"
+                                >
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2">
                                             <span className="text-sm font-semibold truncate">{t.name}({t.code})</span>
                                             <ExitReasonLabel reason={t.exit_reason} />
+                                            <Info size={12} className="text-slate-600 group-hover:text-slate-400 transition-colors shrink-0" />
                                         </div>
                                         <div className="text-xs text-slate-500 mt-0.5">
                                             {t.exit_time ? new Date(t.exit_time).toLocaleString('ko-KR') : ''}
@@ -400,5 +503,6 @@ export default function PaperTradingDashboard() {
                 </div>
             )}
         </div>
+        </>
     );
 }

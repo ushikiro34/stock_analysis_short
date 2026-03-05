@@ -433,7 +433,8 @@ async def run_simple_backtest(
     logger.info(f"[BT] Loading historical data for {len(symbols)} symbols in parallel...")
 
     # 병렬로 모든 종목의 데이터 로드
-    days = (end_date - start_date).days + 30  # 여유있게
+    # MA120 계산 워밍업을 위해 백테스팅 기간보다 150일 더 로드
+    days = (end_date - start_date).days + 150
 
     async def load_data(code: str):
         try:
@@ -458,37 +459,39 @@ async def run_simple_backtest(
     # 각 종목별로 시뮬레이션
     for code, ohlcv_data in symbol_data.items():
 
-        # 날짜 필터링 (timezone-aware 처리)
+        # timezone-aware 처리
         ohlcv_data.index = pd.to_datetime(ohlcv_data.index)
-
-        # timezone 제거 (naive datetime으로 변환)
         if ohlcv_data.index.tz is not None:
             ohlcv_data.index = ohlcv_data.index.tz_localize(None)
 
-        ohlcv_data = ohlcv_data[(ohlcv_data.index >= start_date) & (ohlcv_data.index <= end_date)]
+        # 끝날짜만 필터 (시작 이전 데이터는 MA120 등 워밍업용으로 유지)
+        ohlcv_data = ohlcv_data[ohlcv_data.index <= end_date]
 
         if len(ohlcv_data) < 20:
             continue
 
         # 각 날짜별로 진입/청산 시뮬레이션
-        for i in range(20, len(ohlcv_data)):  # 최소 20일 데이터 필요
+        for i in range(20, len(ohlcv_data)):
             current_date = ohlcv_data.index[i]
             current_price = ohlcv_data.iloc[i]["Close"]
 
-            # 기존 포지션 청산 체크
-            for trade in backtester.open_positions[:]:
-                if trade.code == code:
-                    should_exit, exit_reason = backtester.check_exit_conditions(
-                        trade, current_date, current_price
-                    )
+            # 백테스팅 기간(start_date) 이전은 워밍업 구간 — 포지션/기록 없음
+            in_period = current_date >= start_date
 
-                    if should_exit:
-                        backtester.close_position(trade, current_date, current_price, exit_reason)
+            # 기존 포지션 청산 체크
+            if in_period:
+                for trade in backtester.open_positions[:]:
+                    if trade.code == code:
+                        should_exit, exit_reason = backtester.check_exit_conditions(
+                            trade, current_date, current_price
+                        )
+                        if should_exit:
+                            backtester.close_position(trade, current_date, current_price, exit_reason)
 
             # 신규 진입 체크
-            if backtester.can_open_position():
-                # 현재까지의 데이터로 신호 생성
-                historical_data = ohlcv_data.iloc[:i+1].tail(120)  # 최근 120일
+            if in_period and backtester.can_open_position():
+                # 현재까지의 전체 데이터로 신호 생성 (워밍업 포함, 최근 120일)
+                historical_data = ohlcv_data.iloc[:i+1].tail(120)
 
                 signal = backtester.signal_manager.generate_entry_signal(
                     historical_data,
@@ -504,9 +507,10 @@ async def run_simple_backtest(
                         entry_signal=signal
                     )
 
-            # 포트폴리오 가치 업데이트
-            current_prices = {trade.code: current_price for trade in backtester.open_positions if trade.code == code}
-            backtester.update_portfolio_value(current_date, current_prices)
+            # 포트폴리오 가치 업데이트 (백테스팅 기간만)
+            if in_period:
+                current_prices = {trade.code: current_price for trade in backtester.open_positions if trade.code == code}
+                backtester.update_portfolio_value(current_date, current_prices)
 
     # 미청산 포지션 강제 청산
     for trade in backtester.open_positions[:]:

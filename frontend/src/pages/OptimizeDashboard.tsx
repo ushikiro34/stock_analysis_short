@@ -234,32 +234,32 @@ export default function OptimizeDashboard({ market }: OptimizeDashboardProps) {
                                 <div className="grid grid-cols-3 gap-4">
                                     <div>
                                         <div className="text-xs text-slate-400 mb-1">ROI</div>
-                                        <div className={`text-2xl font-bold ${result.best_performance.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                            {result.best_performance.roi >= 0 ? '+' : ''}{result.best_performance.roi.toFixed(2)}%
+                                        <div className={`text-2xl font-bold ${(result.best_performance.roi ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                            {(result.best_performance.roi ?? 0) >= 0 ? '+' : ''}{(result.best_performance.roi ?? 0).toFixed(2)}%
                                         </div>
                                     </div>
                                     <div>
                                         <div className="text-xs text-slate-400 mb-1">Sharpe Ratio</div>
                                         <div className="text-2xl font-bold text-blue-400">
-                                            {result.best_performance.sharpe_ratio.toFixed(2)}
+                                            {(result.best_performance.sharpe_ratio ?? 0).toFixed(2)}
                                         </div>
                                     </div>
                                     <div>
                                         <div className="text-xs text-slate-400 mb-1">승률</div>
                                         <div className="text-2xl font-bold text-purple-400">
-                                            {result.best_performance.win_rate.toFixed(1)}%
+                                            {(result.best_performance.win_rate ?? 0).toFixed(1)}%
                                         </div>
                                     </div>
                                     <div>
                                         <div className="text-xs text-slate-400 mb-1">총 거래</div>
                                         <div className="text-2xl font-bold text-slate-200">
-                                            {result.best_performance.total_trades}
+                                            {result.best_performance.total_trades ?? 0}
                                         </div>
                                     </div>
                                     <div>
                                         <div className="text-xs text-slate-400 mb-1">MDD</div>
                                         <div className="text-2xl font-bold text-red-400">
-                                            {result.best_performance.mdd.toFixed(2)}%
+                                            {(result.best_performance.mdd ?? 0).toFixed(2)}%
                                         </div>
                                     </div>
                                 </div>

@@ -202,10 +202,15 @@ export interface PaperTrade {
     id: number;
     code: string;
     name: string;
-    profit_loss_pct: number;
-    profit_loss: number;
-    exit_reason: string | null;
+    market: string;
+    entry_time: string | null;
+    entry_price: number;
     exit_time: string | null;
+    exit_price: number | null;
+    exit_reason: string | null;
+    quantity: number;
+    profit_loss: number;
+    profit_loss_pct: number;
 }
 
 export interface PaperHistoryPoint {
@@ -266,6 +271,33 @@ export const runBacktest = (req: BacktestRequest): Promise<BacktestResult> =>
 
 export const runQuickOptimize = (req: OptimizeRequest): Promise<OptimizeResult> =>
     post('/optimize/quick', req);
+
+// ── Monitor ───────────────────────────────────────────────────
+
+export interface LogEntry {
+    ts: string;
+    level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
+    logger: string;
+    msg: string;
+}
+
+export interface MonitorStatus {
+    uptime_seconds: number;
+    tasks: {
+        collector: string;
+        scorer: string;
+        paper: string;
+    };
+}
+
+export const monitor = {
+    getStatus: (): Promise<MonitorStatus> =>
+        get('/monitor/status'),
+    getLogs: (level = 'DEBUG', limit = 200): Promise<LogEntry[]> =>
+        get(`/monitor/logs?level=${level}&limit=${limit}`),
+    clearLogs: (): Promise<{ cleared: boolean }> =>
+        fetch(`${BASE_URL}/monitor/logs`, { method: 'DELETE' }).then(r => r.json()),
+};
 
 // ── Paper Trading ─────────────────────────────────────────────
 

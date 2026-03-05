@@ -22,7 +22,12 @@ from .routers import (
     optimize_router,
     sectors_router,
     paper_router,
+    monitor_router,
 )
+
+# Install in-memory log buffer (captures all log output for /monitor/logs)
+from ..core import log_buffer as _log_buffer
+_log_buffer.install()
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,7 @@ app.include_router(backtest_router)
 app.include_router(optimize_router)
 app.include_router(sectors_router)
 app.include_router(paper_router)
+app.include_router(monitor_router)
 
 
 # ── Background Tasks ──────────────────────────────────────────

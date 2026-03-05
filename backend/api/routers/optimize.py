@@ -5,6 +5,7 @@ Optimization API Router
 from fastapi import APIRouter, HTTPException
 from typing import List
 import logging
+import math
 
 from ..schemas.optimize import OptimizeRequest, QuickOptimizeRequest, OptimizeResponse
 from ...backtest.optimizer import GridSearchOptimizer, OptimizationParams, quick_optimize
@@ -12,6 +13,23 @@ from ...backtest.optimizer import GridSearchOptimizer, OptimizationParams, quick
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/optimize", tags=["🔧 Optimize"])
+
+
+def _sanitize_json(obj):
+    """NaN/Inf/numpy scalar/pandas.Timestamp → JSON 안전한 타입으로 변환"""
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_json(v) for v in obj]
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    if hasattr(obj, 'item'):               # numpy scalar
+        return _sanitize_json(obj.item())
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    return obj
 
 
 @router.post("/grid-search", response_model=OptimizeResponse)
@@ -44,7 +62,7 @@ async def run_grid_search(request: OptimizeRequest):
             days=request.days
         )
 
-        return result
+        return _sanitize_json(result)
 
     except Exception as e:
         logger.error(f"Grid search error: {e}")
@@ -67,7 +85,7 @@ async def run_quick_optimization(request: QuickOptimizeRequest):
             metric=request.optimization_metric
         )
 
-        return result
+        return _sanitize_json(result)
 
     except Exception as e:
         logger.error(f"Quick optimization error: {e}")

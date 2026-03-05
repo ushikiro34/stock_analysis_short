@@ -86,10 +86,10 @@ export default function PaperTradingDashboard() {
                 paperTrading.getTrades(30),
                 paperTrading.getHistory(200),
             ]);
-            setStatus(s.data);
-            setPositions(p.data);
-            setTrades(t.data);
-            setHistory(h.data);
+            setStatus(s);
+            setPositions(p);
+            setTrades(t);
+            setHistory(h);
             setError(null);
         } catch {
             setError('서버에 연결할 수 없습니다');

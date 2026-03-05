@@ -356,7 +356,7 @@ class RSIGoldenCrossSignal:
 - 13개 BUY 신호 발견
 - Top 종목: LION (90점), AAOI (80점), SOFI (80점, RSI 30 돌파 4일 전 감지!)
 
-**상세 문서**: [RSI_GOLDEN_CROSS_STRATEGY.md](RSI_GOLDEN_CROSS_STRATEGY.md)
+*(전략 상세 내용은 본 문서의 위 섹션 참조)*
 
 ---
 

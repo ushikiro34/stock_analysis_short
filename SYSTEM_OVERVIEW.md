@@ -873,6 +873,36 @@ on_startup → run_paper_trading() (백그라운드 태스크)
   - 미국장: `$1 미만` + 입력란 달러($) 단위
   - 시장 전환 시 가격 필터 자동 초기화
 
+### v2.3.1 (2026-03-05) — 버그픽스
+
+#### 백엔드
+- ✅ **KISRestClient 싱글턴 공유** (`backend/kis/rest_client.py` 외 3개 파일)
+  - **원인**: `signal_service.py`, `paper_engine.py`, `score_service.py`가 호출마다 `KISRestClient()` 신규 인스턴스 생성 → KIS 토큰 추가 발급 요청 → **403 Forbidden** (일 1회 발급 제한)
+  - **증상**: KR 신호 스캔(`/signals/scan?market=KR`) 항상 `[]` 반환
+  - **수정**: `rest_client.py`에 `get_kis_client()` 팩토리 추가, 앱 전체에서 단일 인스턴스·토큰 공유
+
+- ✅ **KR 기술적 지표 누락** (`backend/core/score_service.py`)
+  - **원인**: `collect_technical()`에서 `pykrx_stock` 미임포트 → `NameError` → `except`에서 `{}` 반환
+  - **증상**: KR 종목 점수 조회 시 `"technical": {}` (빈 객체)
+  - **수정**: `from pykrx import stock as pykrx_stock` 임포트 추가
+
+#### 프론트엔드
+- ✅ **모의투자 탭 오류** (`frontend/src/lib/api.ts`, `frontend/src/pages/PaperTradingDashboard.tsx`)
+  - **원인 1**: `.gitignore`의 `lib/` 패턴이 `frontend/src/lib/api.ts`도 제외 → api.ts가 git 미추적 → PaperTrading 타입·API 코드 동기화 불가
+  - **원인 2**: `paperTrading` API 함수 반환 타입을 `Promise<{ data: T }>` 로 잘못 정의 → 실제 응답은 `T` 직접 반환 → `s.data === undefined`
+  - **수정**: `.gitignore`의 `lib/` → `/lib/` (루트 한정), `api.ts`에 PaperTrading 타입·API 추가, `.data` 접근 제거
+
+- ✅ **BacktestResult / OptimizeResult 타입 부정확** (`frontend/src/lib/api.ts`)
+  - **원인**: `Record<string, unknown>` 사용으로 모든 필드가 `unknown` 타입 → TypeScript 컴파일 오류 50개+
+  - **수정**: 구체적 인터페이스(`BacktestSummary`, `BacktestAdvancedMetrics`, `BacktestTrade`, `OptimizeBestParams` 등) 정의
+
+### v2.3.0 (2026-03-05)
+- ✅ 모의투자 시뮬레이션 (Paper Trading) 기능 추가
+  - 실시간 KIS API 데이터 기반 자동매매 시뮬레이션 (실제 주문 없음)
+  - 포지션 관리, 거래 내역, 포트폴리오 차트
+  - 익절 3단계(+3%/+5%/+10%), 트레일링 스탑, 시간 기반 청산
+  - DB 기반 상태 영속화 (서버 재시작 후 복원)
+
 ### v2.1.0 (2026-03-02)
 - ✅ RSI 골든크로스 전략 추가
 - ✅ Finviz 스크리너 통합 (47개 → 500개+)
@@ -889,5 +919,5 @@ on_startup → run_paper_trading() (백그라운드 태스크)
 ---
 
 **문서 최종 수정일**: 2026년 3월 5일
-**버전**: 2.3.0
+**버전**: 2.3.1
 **작성자**: Claude Code (Anthropic)

@@ -206,3 +206,15 @@ class KISRestClient:
         result = all_results[:limit]
         logger.info(f"KIS surge stocks: {len(result)}")
         return result
+
+
+# ── 앱 전역 싱글턴 (토큰 캐시 공유) ─────────────────────────
+_default_client: KISRestClient | None = None
+
+
+def get_kis_client() -> KISRestClient:
+    """전역 KISRestClient 싱글턴 반환 — 토큰을 앱 전체에서 공유"""
+    global _default_client
+    if _default_client is None:
+        _default_client = KISRestClient()
+    return _default_client

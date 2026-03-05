@@ -11,7 +11,7 @@ import time
 import logging
 
 from ...core.score_service import calculate_score
-from ...kis.rest_client import KISRestClient
+from ...kis.rest_client import get_kis_client
 from pykrx import stock as pykrx_stock
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ class MinuteOHLCVResponse(BaseModel):
 
 
 # ── KIS REST Client ───────────────────────────────────────────
-kis_client = KISRestClient()
+kis_client = get_kis_client()
 _surge_cache: dict = {"data": [], "ts": 0}
 _us_surge_cache: dict = {"data": [], "ts": 0}
 _penny_stocks_cache: dict = {"data": [], "ts": 0}

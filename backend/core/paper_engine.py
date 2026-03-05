@@ -162,9 +162,8 @@ class PaperEngine:
     async def _get_current_price(self, code: str, market: str) -> Optional[float]:
         try:
             if market == "KR":
-                from ..kis.rest_client import KISRestClient
-                client = KISRestClient()
-                candles = await client.get_minute_chart(code)
+                from ..kis.rest_client import get_kis_client
+                candles = await get_kis_client().get_minute_chart(code)
                 if candles:
                     return float(candles[-1]["close"])
             else:
@@ -330,11 +329,10 @@ class PaperEngine:
 
     async def _scan_and_buy(self, db: AsyncSession, current_prices: dict) -> None:
         from .signal_service import generate_entry_signals_bulk
-        from ..kis.rest_client import KISRestClient
+        from ..kis.rest_client import get_kis_client
 
         try:
-            client = KISRestClient()
-            surge = await client.get_volume_rank(limit=50)
+            surge = await get_kis_client().get_volume_rank(limit=50)
             name_map = {s["code"]: s.get("name", "") for s in surge}
             codes = [s["code"] for s in surge if not self._already_holding(s["code"])]
             if not codes:

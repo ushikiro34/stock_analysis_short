@@ -276,9 +276,8 @@ async def scan_signals_from_surge_stocks(market: str = "KR", strategy: str = "co
         from ..us.yfinance_client import get_us_surge_stocks
         surge_stocks = await get_us_surge_stocks(limit=30)
     else:
-        from ..kis.rest_client import KISRestClient
-        kis_client = KISRestClient()
-        surge_stocks = await kis_client.get_volume_rank(max_price=20000, limit=30)
+        from ..kis.rest_client import get_kis_client
+        surge_stocks = await get_kis_client().get_volume_rank(max_price=20000, limit=30)
 
     codes = [stock["code"] for stock in surge_stocks]
 

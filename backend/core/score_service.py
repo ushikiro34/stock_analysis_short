@@ -8,21 +8,13 @@ import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
+from pykrx import stock as pykrx_stock
 
 from .scorer import Scorer
 from .indicators import IndicatorEngine
+from ..kis.rest_client import get_kis_client
 
 logger = logging.getLogger(__name__)
-
-# KIS 클라이언트 싱글턴 (토큰 재사용을 위해 모듈 레벨에서 공유)
-_kis_client = None
-
-def _get_kis_client():
-    global _kis_client
-    if _kis_client is None:
-        from ..kis.rest_client import KISRestClient
-        _kis_client = KISRestClient()
-    return _kis_client
 
 
 async def _run_sync(fn):
@@ -39,7 +31,7 @@ async def collect_fundamental(code: str, market: str = "KR") -> dict:
 
     # KR: KIS REST API 사용 (pykrx의 KRX 통계 API는 인증 정책 변경으로 사용 불가)
     try:
-        return await _get_kis_client().get_kr_fundamental(code)
+        return await get_kis_client().get_kr_fundamental(code)
     except Exception as e:
         logger.error(f"[{code}] KIS fundamental collection error: {e}")
         return {}

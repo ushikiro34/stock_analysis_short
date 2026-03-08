@@ -220,9 +220,16 @@ export interface PaperHistoryPoint {
 
 // ── Helpers ───────────────────────────────────────────────────
 
+function extractDetail(text: string, fallback: string): string {
+    try { return JSON.parse(text)?.detail ?? fallback; } catch { return fallback; }
+}
+
 async function get<T>(path: string): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`);
-    if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(extractDetail(text, `HTTP ${res.status}`));
+    }
     return res.json();
 }
 
@@ -232,7 +239,10 @@ async function post<T>(path: string, body: unknown): Promise<T> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(extractDetail(text, `HTTP ${res.status}`));
+    }
     return res.json();
 }
 
@@ -316,4 +326,10 @@ export const paperTrading = {
         post('/paper/stop', {}),
     reset: (): Promise<unknown> =>
         post('/paper/reset', {}),
+    closeAllPositions: (): Promise<unknown> =>
+        post('/paper/positions/close-all', {}),
+    closePosition: (code: string): Promise<unknown> =>
+        post(`/paper/positions/${code}/close`, {}),
+    addPosition: (data: { code: string; name?: string; entry_price: number; quantity?: number }): Promise<unknown> =>
+        post('/paper/positions', data),
 };

@@ -54,13 +54,17 @@ function App() {
     };
 
     // ── Signal Alert System ────────────────────────────────────
-    const [alerts, setAlerts] = useState<SignalAlert[]>([]);
+    const [alerts, setAlerts] = useState<SignalAlert[]>([]);          // 토스트용 (8초 자동 소멸)
+    const [alertHistory, setAlertHistory] = useState<SignalAlert[]>([]); // 영구 이력 (최대 10개)
     const [focusSignalCode, setFocusSignalCode] = useState<string | undefined>();
     const [pollError, setPollError] = useState(false);
     const [showAlertPanel, setShowAlertPanel] = useState(false);
     const bellWrapperRef = useRef<HTMLDivElement>(null);
     const seenKeysRef = useRef(new Set<string>());
     const isFirstPollRef = useRef(true);
+
+    const fmtAlertTime = (ts: number) =>
+        new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     // 벨 패널 외부 클릭 시 닫기
     useEffect(() => {
@@ -75,7 +79,17 @@ function App() {
     }, [showAlertPanel]);
 
     const dismissAlert = (id: string) => setAlerts(prev => prev.filter(a => a.id !== id));
+    const dismissHistory = (id: string) => setAlertHistory(prev => prev.filter(a => a.id !== id));
+    const clearHistory = () => setAlertHistory([]);
 
+    // 이력 패널: 이동만 하고 삭제하지 않음
+    const handleAlertNavClick = (code: string) => {
+        setActiveTab('signals');
+        setFocusSignalCode(code);
+        setShowAlertPanel(false);
+    };
+
+    // 토스트 클릭: 신호 탭 이동 + 토스트 제거 (이력은 유지)
     const handleAlertClick = (code: string, alertId: string) => {
         setActiveTab('signals');
         setFocusSignalCode(code);
@@ -110,10 +124,13 @@ function App() {
                             market,
                             createdAt: Date.now(),
                         }));
+                        // 토스트: 8초 후 자동 소멸
                         setAlerts(prev => [...newAlerts, ...prev].slice(0, 20));
                         newAlerts.forEach(alert => {
                             setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== alert.id)), 8000);
                         });
+                        // 이력: 최대 10개 영구 보관
+                        setAlertHistory(prev => [...newAlerts, ...prev].slice(0, 10));
                         if ('Notification' in window && Notification.permission === 'granted') {
                             newSignals.slice(0, 3).forEach(s => {
                                 const name = s.stock_info?.name || s.code;
@@ -325,13 +342,13 @@ function App() {
                                 title={pollError ? '신호 폴링 실패 — 네트워크를 확인하세요' : '알림 목록'}
                                 className="relative p-1 rounded hover:bg-slate-700 transition-colors"
                             >
-                                <Bell size={20} className={pollError ? 'text-red-400' : alerts.length > 0 ? 'text-green-400' : 'text-slate-500'} />
+                                <Bell size={20} className={pollError ? 'text-red-400' : alertHistory.length > 0 ? 'text-green-400' : 'text-slate-500'} />
                                 {pollError && (
                                     <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">!</span>
                                 )}
-                                {!pollError && alerts.length > 0 && (
+                                {!pollError && alertHistory.length > 0 && (
                                     <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                                        {alerts.length > 9 ? '9+' : alerts.length}
+                                        {alertHistory.length}
                                     </span>
                                 )}
                             </button>
@@ -340,39 +357,59 @@ function App() {
                             {showAlertPanel && (
                                 <div className="absolute top-10 right-0 w-80 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl z-50 overflow-hidden">
                                     <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
-                                        <span className="text-sm font-semibold">신호 알림 {alerts.length}건</span>
+                                        <span className="text-sm font-semibold">
+                                            신호 알림 이력
+                                            <span className="ml-1.5 text-xs text-slate-400 font-normal">
+                                                {alertHistory.length}/10
+                                            </span>
+                                        </span>
                                         <button
-                                            onClick={() => { setAlerts([]); setShowAlertPanel(false); }}
+                                            onClick={clearHistory}
                                             className="text-xs text-slate-400 hover:text-red-400 transition-colors"
                                         >
-                                            모두 닫기
+                                            모두 지우기
                                         </button>
                                     </div>
-                                    {alerts.length === 0 ? (
-                                        <div className="px-4 py-6 text-center text-sm text-slate-500">새 신호 없음</div>
+                                    {alertHistory.length === 0 ? (
+                                        <div className="px-4 py-6 text-center text-sm text-slate-500">알림 없음</div>
                                     ) : (
-                                        <div className="max-h-96 overflow-y-auto">
-                                            {alerts.map(alert => (
-                                                <div
-                                                    key={alert.id}
-                                                    className="flex items-center gap-3 px-4 py-3 border-b border-slate-700/50 hover:bg-slate-700/50 cursor-pointer transition-colors"
-                                                    onClick={() => { handleAlertClick(alert.code, alert.id); setShowAlertPanel(false); }}
-                                                >
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="font-semibold text-sm truncate">
-                                                            {alert.name ? `${alert.name}(${alert.code})` : alert.code}
-                                                        </div>
-                                                        <div className="text-xs text-slate-400 mt-0.5">
-                                                            점수: <span className="text-white font-bold">{alert.score.toFixed(0)}</span>
-                                                            {' · '}
-                                                            <span className={alert.strength === 'high' ? 'text-green-400' : alert.strength === 'medium' ? 'text-yellow-400' : 'text-slate-400'}>
-                                                                {alert.strength.toUpperCase()}
+                                        <div className="max-h-[420px] overflow-y-auto divide-y divide-slate-700/50">
+                                            {alertHistory.map(alert => (
+                                                <div key={alert.id} className="flex items-start gap-2 px-4 py-3 hover:bg-slate-700/40 transition-colors group">
+                                                    {/* 클릭 → 신호 탭 이동 (이력은 유지) */}
+                                                    <div
+                                                        className="flex-1 min-w-0 cursor-pointer"
+                                                        onClick={() => handleAlertNavClick(alert.code)}
+                                                    >
+                                                        <div className="flex items-center gap-1.5 mb-0.5">
+                                                            <span className="font-semibold text-sm truncate">
+                                                                {alert.name ? `${alert.name}(${alert.code})` : alert.code}
                                                             </span>
                                                         </div>
+                                                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                                                            <span>
+                                                                점수: <span className="text-white font-bold">{alert.score.toFixed(0)}</span>
+                                                            </span>
+                                                            <span className={`font-semibold ${alert.strength === 'high' ? 'text-green-400' : alert.strength === 'medium' ? 'text-yellow-400' : 'text-slate-400'}`}>
+                                                                {alert.strength.toUpperCase()}
+                                                            </span>
+                                                            {alert.currentPrice && (
+                                                                <span className="font-mono">
+                                                                    {alert.market === 'US' ? '$' : ''}
+                                                                    {alert.currentPrice.toLocaleString()}
+                                                                    {alert.market === 'KR' ? '원' : ''}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="text-xs text-slate-500 mt-0.5">
+                                                            {fmtAlertTime(alert.createdAt)}
+                                                        </div>
                                                     </div>
+                                                    {/* 개별 삭제 버튼 */}
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); dismissAlert(alert.id); }}
-                                                        className="text-slate-600 hover:text-slate-300 shrink-0 transition-colors"
+                                                        onClick={() => dismissHistory(alert.id)}
+                                                        title="삭제"
+                                                        className="mt-0.5 text-slate-600 hover:text-red-400 shrink-0 transition-colors opacity-0 group-hover:opacity-100"
                                                     >
                                                         <X size={14} />
                                                     </button>

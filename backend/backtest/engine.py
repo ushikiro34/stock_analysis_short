@@ -46,7 +46,15 @@ class Trade:
     highest_price: float = 0.0
     lowest_price: float = 0.0
 
+    # 분할 익절/손절 추적 (내부 상태, 보고서 미포함)
+    original_quantity: int = field(default=0, init=False)
+    executed_tp_targets: set = field(default_factory=set)
+    executed_sl_targets: set = field(default_factory=set)
+    dynamic_stop_price: float = 0.0  # 동적 손절가 (1차 익절 후 본전으로 이동)
+    breakeven_active: bool = False    # 1차 익절 후 break-even 발동 여부
+
     def __post_init__(self):
+        self.original_quantity = self.quantity
         if self.highest_price == 0.0:
             self.highest_price = self.entry_price
         if self.lowest_price == 0.0:
@@ -101,12 +109,16 @@ class BacktestConfig:
 
     # 청산 조건
     take_profit_targets: List[Dict] = field(default_factory=lambda: [
-        {"ratio": 0.03, "volume_pct": 0.5, "name": "1차 익절 +3%"},
-        {"ratio": 0.05, "volume_pct": 0.3, "name": "2차 익절 +5%"},
-        {"ratio": 0.10, "volume_pct": 0.2, "name": "3차 익절 +10%"},
+        {"ratio": 0.03, "volume_pct": 0.33, "name": "1차 익절 +3%"},   # 잔여의 1/3 — 빠른 확정
+        {"ratio": 0.07, "volume_pct": 0.50, "name": "2차 익절 +7%"},   # 잔여의 1/2
+        {"ratio": 0.15, "volume_pct": 1.00, "name": "3차 익절 +15%"},  # 전량
     ])
-    stop_loss_ratio: float = -0.02  # -2% 손절
-    trailing_stop_ratio: float = -0.03  # 최고가 대비 -3%
+    stop_loss_targets: List[Dict] = field(default_factory=lambda: [
+        {"ratio": -0.01, "volume_pct": 0.33, "name": "1차 손절 -1%"},  # 잔여의 1/3
+        {"ratio": -0.02, "volume_pct": 1.00, "name": "2차 손절 -2%"},  # 전량
+    ])
+    stop_loss_ratio: float = -0.02  # 하위 호환용 (동적 손절가 초기값으로만 사용)
+    trailing_stop_ratio: float = -0.05  # 최고가 대비 -5%
     max_holding_days: int = 5  # 최대 보유 일수
 
     # 수수료
@@ -186,6 +198,9 @@ class Backtester:
             entry_signal=entry_signal
         )
 
+        # 동적 손절가 초기화
+        trade.dynamic_stop_price = entry_price * (1 + self.config.stop_loss_ratio)
+
         # 자본 업데이트
         self.cash -= total_cost
 
@@ -199,59 +214,85 @@ class Backtester:
         return trade
 
     def close_position(self, trade: Trade, exit_time: datetime,
-                      exit_price: float, exit_reason: str):
-        """포지션 청산"""
-        # 매도 금액 (가격 - 수수료)
-        revenue = exit_price * trade.quantity
-        commission = self.get_commission(exit_price, trade.quantity)
-        net_revenue = revenue - commission
+                      exit_price: float, exit_reason: str, volume_pct: float = 1.0):
+        """포지션 청산 (volume_pct < 1.0이면 부분 청산, 잔여 수량 기준)"""
+        close_qty = trade.quantity if volume_pct >= 1.0 else max(1, int(trade.quantity * volume_pct))
+        close_qty = min(close_qty, trade.quantity)
 
-        # 거래 종료
-        trade.close(exit_time, exit_price, exit_reason)
+        commission = self.get_commission(exit_price, close_qty)
+        self.cash += exit_price * close_qty - commission
 
-        # 자본 업데이트
-        self.cash += net_revenue
+        is_full = (close_qty >= trade.quantity)
 
-        # 포지션 제거
-        self.open_positions.remove(trade)
-
-        # 통계 업데이트
-        if trade.profit_loss > 0:
-            self.winning_trades += 1
+        if is_full:
+            trade.quantity = close_qty
+            trade.close(exit_time, exit_price, exit_reason)
+            self.open_positions.remove(trade)
+            if trade.profit_loss > 0:
+                self.winning_trades += 1
+            else:
+                self.losing_trades += 1
+            logger.info(f"[BT] CLOSE: {trade.code} x{close_qty} @ ${exit_price:.2f} "
+                       f"({trade.profit_loss_pct:+.2f}%) - {exit_reason}")
         else:
-            self.losing_trades += 1
-
-        logger.info(f"[BT] CLOSE: {trade.code} x{trade.quantity} @ ${exit_price:.2f} "
-                   f"({trade.profit_loss_pct:+.2f}%) - {exit_reason}")
+            pl_pct = (exit_price - trade.entry_price) / trade.entry_price * 100
+            trade.quantity -= close_qty
+            # TP 부분청산일 때만 break-even 이동 (SL 부분청산은 이동 안 함)
+            tp_names = {tgt["name"] for tgt in self.config.take_profit_targets}
+            if exit_reason in tp_names and not trade.breakeven_active:
+                trade.dynamic_stop_price = max(trade.dynamic_stop_price, trade.entry_price)
+                trade.breakeven_active = True
+                logger.info(f"[BT] PARTIAL(TP): {trade.code} x{close_qty} → 잔여 x{trade.quantity} "
+                           f"@ ${exit_price:.2f} ({pl_pct:+.2f}%) - {exit_reason} | 손절가 → 본전")
+            else:
+                logger.info(f"[BT] PARTIAL(SL): {trade.code} x{close_qty} → 잔여 x{trade.quantity} "
+                           f"@ ${exit_price:.2f} ({pl_pct:+.2f}%) - {exit_reason}")
+            self.winning_trades += 1
 
     def check_exit_conditions(self, trade: Trade, current_time: datetime,
-                             current_price: float) -> Tuple[bool, Optional[str]]:
-        """청산 조건 체크"""
+                             current_price: float) -> Tuple[bool, Optional[str], float]:
+        """청산 조건 체크 → (should_exit, reason, volume_pct)
+        volume_pct: 청산 비율 (잔여 수량 기준, 1.0 = 전량)
+        """
         # 가격 극값 업데이트
         trade.update_price_extremes(current_price)
 
-        # 1. 익절 체크
         profit_ratio = (current_price - trade.entry_price) / trade.entry_price
-        for target in self.config.take_profit_targets:
-            if profit_ratio >= target["ratio"]:
-                return True, target["name"]
 
-        # 2. 고정 손절
-        loss_ratio = (current_price - trade.entry_price) / trade.entry_price
-        if loss_ratio <= self.config.stop_loss_ratio:
-            return True, "fixed_stop_loss"
+        # 1. 분할 익절 (이미 실행된 단계는 건너뜀)
+        for i, target in enumerate(self.config.take_profit_targets):
+            if i in trade.executed_tp_targets:
+                continue
+            if profit_ratio >= target["ratio"]:
+                trade.executed_tp_targets.add(i)
+                return True, target["name"], target["volume_pct"]
+
+        # 2. 손절 분기
+        if trade.breakeven_active:
+            # Phase B: 1차 익절 후 → break-even 손절 전량
+            stop_ratio = (trade.dynamic_stop_price - trade.entry_price) / trade.entry_price
+            if profit_ratio <= stop_ratio:
+                return True, "손절(본전)", 1.0
+        else:
+            # Phase A: 1차 익절 전 → 분할 손절
+            for i, sl in enumerate(self.config.stop_loss_targets):
+                if i in trade.executed_sl_targets:
+                    continue
+                if profit_ratio <= sl["ratio"]:
+                    trade.executed_sl_targets.add(i)
+                    return True, sl["name"], sl["volume_pct"]
 
         # 3. 트레일링 스톱
         trailing_threshold = trade.highest_price * (1 + self.config.trailing_stop_ratio)
         if current_price <= trailing_threshold and trade.highest_price > trade.entry_price:
-            return True, "trailing_stop"
+            return True, "trailing_stop", 1.0
 
         # 4. 시간 기반 청산
         holding_days = (current_time - trade.entry_time).days
         if holding_days >= self.config.max_holding_days:
-            return True, f"time_limit_{self.config.max_holding_days}days"
+            return True, f"time_limit_{self.config.max_holding_days}days", 1.0
 
-        return False, None
+        return False, None, 0.0
 
     def update_portfolio_value(self, current_date: datetime, current_prices: Dict[str, float]):
         """포트폴리오 가치 업데이트"""
@@ -482,11 +523,11 @@ async def run_simple_backtest(
             if in_period:
                 for trade in backtester.open_positions[:]:
                     if trade.code == code:
-                        should_exit, exit_reason = backtester.check_exit_conditions(
+                        should_exit, exit_reason, volume_pct = backtester.check_exit_conditions(
                             trade, current_date, current_price
                         )
                         if should_exit:
-                            backtester.close_position(trade, current_date, current_price, exit_reason)
+                            backtester.close_position(trade, current_date, current_price, exit_reason, volume_pct)
 
             # 신규 진입 체크
             if in_period and backtester.can_open_position():

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 import time
@@ -37,8 +38,13 @@ class KISRestClient:
             logger.info("KIS access token obtained")
             return self._token
 
-    async def get_minute_chart(self, code: str) -> list[dict]:
-        """KIS REST API로 분봉 데이터 조회 (최대 30개)"""
+    async def get_minute_chart(self, code: str, until_hour: str = "155000") -> list[dict]:
+        """KIS REST API로 분봉 데이터 조회 (최대 30개).
+
+        Args:
+            code: 종목 코드
+            until_hour: 기준 시각 HHMMSS — 이 시각 이전 30봉 반환 (기본: 장 마감 155000)
+        """
         token = await self._get_token()
         headers = {
             "authorization": f"Bearer {token}",
@@ -51,7 +57,7 @@ class KISRestClient:
             "FID_ETC_CLS_CODE": "",
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": code,
-            "FID_INPUT_HOUR_1": "155000",
+            "FID_INPUT_HOUR_1": until_hour,
             "FID_PW_DATA_INCU_YN": "N",
         }
 
@@ -84,6 +90,55 @@ class KISRestClient:
 
         results.reverse()  # 시간 오름차순으로
         return results
+
+    async def get_full_day_minute_chart(self, code: str, since_hour: str = "090000") -> list[dict]:
+        """오늘 since_hour 이후 전체 분봉을 페이지네이션으로 수집.
+
+        KIS API는 1회 최대 30봉을 반환하므로,
+        가장 오래된 봉 시각을 until_hour로 삼아 반복 호출하여 합산한다.
+
+        Args:
+            code: 종목 코드
+            since_hour: 수집 시작 시각 HHMMSS (기본: 장 시작 090000)
+
+        Returns:
+            오름차순 정렬된 분봉 리스트
+        """
+        all_candles: list[dict] = []
+        seen: set[str] = set()
+        until = "160000"  # 장 마감 이후부터 역방향으로
+
+        for _ in range(10):  # 최대 10회 호출 (300봉 ≈ 5시간 커버)
+            batch = await self.get_minute_chart(code, until_hour=until)
+            if not batch:
+                break
+
+            # 중복 제거 후 새 봉만 추출
+            new = [c for c in batch if c["time"] not in seen]
+            if not new:
+                break
+
+            for c in new:
+                seen.add(c["time"])
+
+            # 오래된 봉을 앞에 추가 (new는 오름차순, 그 전체가 기존보다 이전)
+            all_candles = new + all_candles
+
+            # 가장 오래된 봉 시각 → 다음 호출의 until 기준
+            oldest = new[0]["time"]  # "YYYY-MM-DDTHH:MM:SS"
+            oldest_hour = oldest[11:13] + oldest[14:16] + oldest[17:19]
+
+            if oldest_hour <= since_hour:
+                break
+
+            until = oldest_hour
+            await asyncio.sleep(0.2)  # API 과호출 방지
+
+        # since_hour 이전 봉 제거
+        def _to_hms(t: str) -> str:
+            return t[11:13] + t[14:16] + t[17:19] if len(t) >= 19 else "000000"
+
+        return [c for c in all_candles if _to_hms(c["time"]) >= since_hour]
     async def get_kr_fundamental(self, code: str) -> dict:
         """KIS REST API로 국내 주식 펀더멘털 데이터 조회 (PER, PBR, EPS, BPS)
         tr_id: FHKST01010100 - 주식현재가 시세

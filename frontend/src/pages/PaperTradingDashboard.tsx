@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2, Timer, X, Info } from 'lucide-react';
+import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2, Timer, X, Info, Plus } from 'lucide-react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
 import { paperTrading, type PaperStatus, type PaperPosition, type PaperTrade, type PaperHistoryPoint, type PaperStartConfig } from '../lib/api';
 
@@ -118,11 +118,13 @@ function TradeDetailModal({ trade, onClose }: { trade: PaperTrade; onClose: () =
 function ExitReasonLabel({ reason }: { reason: string | null }) {
     if (!reason) return null;
     const map: Record<string, { label: string; color: string }> = {
-        '1차 익절 +3%':  { label: '익절 +3%',  color: 'text-green-400' },
-        '2차 익절 +5%':  { label: '익절 +5%',  color: 'text-green-400' },
-        '3차 익절 +10%': { label: '익절 +10%', color: 'text-green-300' },
-        fixed_stop_loss: { label: '손절',       color: 'text-red-400' },
-        trailing_stop:   { label: '트레일링',   color: 'text-orange-400' },
+        '1차 익절 +3%':  { label: '1차 +3%',  color: 'text-green-400' },
+        '2차 익절 +7%':  { label: '2차 +7%',  color: 'text-green-400' },
+        '3차 익절 +15%': { label: '3차 +15%', color: 'text-green-300' },
+        fixed_stop_loss: { label: '손절',      color: 'text-red-400' },
+        trailing_stop:   { label: '트레일링',  color: 'text-orange-400' },
+        수동청산:         { label: '수동청산',  color: 'text-yellow-400' },
+        일괄청산:         { label: '일괄청산',  color: 'text-orange-300' },
     };
     const info = map[reason] ?? { label: reason, color: 'text-slate-400' };
     return <span className={`text-xs font-semibold ${info.color}`}>{info.label}</span>;
@@ -204,7 +206,7 @@ export default function PaperTradingDashboard() {
             await paperTrading.start(config);
             await fetchAll();
         } catch (e: any) {
-            setError(e?.response?.data?.detail || '시작 실패');
+            setError(e?.message || '시작 실패');
         } finally {
             setActionLoading(false);
         }
@@ -228,6 +230,64 @@ export default function PaperTradingDashboard() {
             await fetchAll();
         } finally {
             setActionLoading(false);
+        }
+    };
+
+    const [closingCode, setClosingCode] = useState<string | null>(null);
+    const [closingAll, setClosingAll] = useState(false);
+
+    const handleCloseAll = async () => {
+        if (positions.length === 0) return;
+        if (!confirm(`보유 중인 포지션 ${positions.length}개를 전체 청산할까요?`)) return;
+        setClosingAll(true);
+        try {
+            await paperTrading.closeAllPositions();
+            await fetchAll();
+        } catch (e: any) {
+            setError(e?.message || '일괄청산 실패');
+        } finally {
+            setClosingAll(false);
+        }
+    };
+
+    // ── 수동 포지션 추가 ────────────────────────────────────
+    const [showAddForm, setShowAddForm] = useState(false);
+    const [addForm, setAddForm] = useState({ code: '', name: '', entry_price: '', quantity: '' });
+    const [addLoading, setAddLoading] = useState(false);
+    const [addError, setAddError] = useState<string | null>(null);
+
+    const handleAddPosition = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!addForm.code || !addForm.entry_price) return;
+        setAddLoading(true);
+        setAddError(null);
+        try {
+            await paperTrading.addPosition({
+                code: addForm.code.trim(),
+                name: addForm.name.trim() || undefined,
+                entry_price: parseFloat(addForm.entry_price),
+                quantity: addForm.quantity ? parseInt(addForm.quantity) : 0,
+            });
+            setAddForm({ code: '', name: '', entry_price: '', quantity: '' });
+            setShowAddForm(false);
+            await fetchAll();
+        } catch (e: any) {
+            setAddError(e?.message || '추가 실패');
+        } finally {
+            setAddLoading(false);
+        }
+    };
+
+    const handleClosePosition = async (code: string, name: string) => {
+        if (!confirm(`[${name}] 포지션을 지금 즉시 수동 청산할까요?`)) return;
+        setClosingCode(code);
+        try {
+            await paperTrading.closePosition(code);
+            await fetchAll();
+        } catch (e: any) {
+            setError(e?.message || '청산 실패');
+        } finally {
+            setClosingCode(null);
         }
     };
 
@@ -420,9 +480,97 @@ export default function PaperTradingDashboard() {
 
                 {/* 보유 포지션 */}
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-                    <h3 className="text-sm font-semibold text-slate-300 mb-3">
-                        보유 포지션 ({positions.length}/{status?.max_positions ?? 3})
-                    </h3>
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-slate-300">
+                            보유 포지션 ({positions.length}/{status?.max_positions ?? 3})
+                        </h3>
+                        <div className="flex items-center gap-1.5">
+                            <button
+                                onClick={() => { setShowAddForm(v => !v); setAddError(null); }}
+                                className={`flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${
+                                    showAddForm
+                                        ? 'bg-slate-600 text-slate-200'
+                                        : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                                }`}
+                            >
+                                <Plus size={11} />
+                                수동 추가
+                            </button>
+                            <button
+                                onClick={handleCloseAll}
+                                disabled={closingAll || positions.length === 0}
+                                className="flex items-center gap-1 px-2 py-1 text-xs bg-red-900/50 hover:bg-red-700/60 border border-red-700/50 rounded text-red-300 transition-colors disabled:opacity-40"
+                            >
+                                {closingAll ? <Loader2 size={11} className="animate-spin" /> : <X size={11} />}
+                                일괄청산
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 수동 추가 폼 */}
+                    {showAddForm && (
+                        <form onSubmit={handleAddPosition} className="mb-3 bg-slate-900/60 border border-slate-600 rounded-lg p-3 space-y-2">
+                            <div className="grid grid-cols-2 gap-2">
+                                <label className="flex flex-col gap-1">
+                                    <span className="text-xs text-slate-400">종목 코드 *</span>
+                                    <input
+                                        type="text" placeholder="043200" required
+                                        value={addForm.code}
+                                        onChange={e => setAddForm(f => ({ ...f, code: e.target.value }))}
+                                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cyan-500"
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-1">
+                                    <span className="text-xs text-slate-400">종목명 (선택)</span>
+                                    <input
+                                        type="text" placeholder="종목명"
+                                        value={addForm.name}
+                                        onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))}
+                                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cyan-500"
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-1">
+                                    <span className="text-xs text-slate-400">진입가 (원) *</span>
+                                    <input
+                                        type="number" placeholder="1000" required min={1}
+                                        value={addForm.entry_price}
+                                        onChange={e => setAddForm(f => ({ ...f, entry_price: e.target.value }))}
+                                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cyan-500"
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-1">
+                                    <span className="text-xs text-slate-400">수량 (0=자동)</span>
+                                    <input
+                                        type="number" placeholder="0" min={0}
+                                        value={addForm.quantity}
+                                        onChange={e => setAddForm(f => ({ ...f, quantity: e.target.value }))}
+                                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cyan-500"
+                                    />
+                                </label>
+                            </div>
+                            {addError && (
+                                <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded px-2 py-1.5">
+                                    {addError}
+                                </div>
+                            )}
+                            <div className="flex gap-2 pt-1">
+                                <button
+                                    type="submit" disabled={addLoading}
+                                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded text-sm font-semibold transition-colors disabled:opacity-50"
+                                >
+                                    {addLoading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                                    추가
+                                </button>
+                                <button
+                                    type="button" onClick={() => setShowAddForm(false)}
+                                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-sm transition-colors"
+                                >
+                                    취소
+                                </button>
+                            </div>
+                        </form>
+                    )}
+
                     {positions.length === 0 ? (
                         <p className="text-sm text-slate-500 py-4 text-center">보유 종목 없음</p>
                     ) : (
@@ -431,7 +579,21 @@ export default function PaperTradingDashboard() {
                                 <div key={p.id ?? p.code} className="bg-slate-900/50 rounded-lg p-3">
                                     <div className="flex items-center justify-between mb-1">
                                         <span className="font-semibold text-sm">{p.name}({p.code})</span>
-                                        {p.unrealized_pnl_pct !== null && <PnlBadge pct={p.unrealized_pnl_pct} />}
+                                        <div className="flex items-center gap-2">
+                                            {p.unrealized_pnl_pct !== null && <PnlBadge pct={p.unrealized_pnl_pct} />}
+                                            <button
+                                                onClick={() => handleClosePosition(p.code, p.name)}
+                                                disabled={closingCode === p.code}
+                                                title="수동 청산"
+                                                className="flex items-center gap-1 px-2 py-0.5 text-xs bg-red-900/40 hover:bg-red-700/60 border border-red-700/50 rounded text-red-300 transition-colors disabled:opacity-50"
+                                            >
+                                                {closingCode === p.code
+                                                    ? <Loader2 size={10} className="animate-spin" />
+                                                    : <X size={10} />
+                                                }
+                                                청산
+                                            </button>
+                                        </div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-x-4 text-xs text-slate-400 mt-1">
                                         <span>진입가: <span className="text-slate-200">{p.entry_price.toLocaleString()}원</span></span>

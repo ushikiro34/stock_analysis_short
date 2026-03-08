@@ -4,7 +4,6 @@ Paper Trading API Router
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
 from ...core.paper_engine import paper_engine
 from ...db.session import get_db
@@ -20,6 +19,13 @@ class StartConfig(BaseModel):
     min_score: float = 65.0
     max_positions: int = 3
     position_size_pct: float = 0.3
+
+
+class AddPositionRequest(BaseModel):
+    code: str
+    name: str = ""
+    entry_price: float
+    quantity: int = 0   # 0 = config 기준 자동 계산
 
 
 @router.post("/start")
@@ -51,10 +57,40 @@ async def get_status():
     return paper_engine.get_status()
 
 
+@router.post("/positions")
+async def add_position(req: AddPositionRequest, db: AsyncSession = Depends(get_db)):
+    """수동 포지션 추가 (quantity=0이면 자동 계산)"""
+    try:
+        result = await paper_engine.open_position_manually(
+            req.code, req.name, req.entry_price, req.quantity, db
+        )
+        return {"status": "opened", **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"서버 오류: {type(e).__name__}: {e}")
+
+
 @router.get("/positions")
 async def get_positions():
     """현재 보유 포지션 조회"""
     return paper_engine.get_positions()
+
+
+@router.post("/positions/close-all")
+async def close_all_positions(db: AsyncSession = Depends(get_db)):
+    """전체 포지션 일괄 청산"""
+    results = await paper_engine.close_all_positions(db)
+    return {"status": "closed_all", "closed": len(results), "positions": results}
+
+
+@router.post("/positions/{code}/close")
+async def close_position(code: str, db: AsyncSession = Depends(get_db)):
+    """특정 포지션 수동 강제 청산"""
+    result = await paper_engine.close_position_manually(code, db)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"포지션 없음: {code}")
+    return {"status": "closed", **result}
 
 
 @router.get("/trades")

@@ -677,9 +677,9 @@ class TakeProfitStrategy:
         """
         self.entry_price = entry_price
         self.targets = targets or [
-            {"ratio": 0.03, "volume_pct": 0.5, "name": "1차 익절 +3%"},
-            {"ratio": 0.05, "volume_pct": 0.3, "name": "2차 익절 +5%"},
-            {"ratio": 0.10, "volume_pct": 0.2, "name": "3차 익절 +10%"},
+            {"ratio": 0.03, "volume_pct": 0.33, "name": "1차 익절 +3%"},
+            {"ratio": 0.07, "volume_pct": 0.50, "name": "2차 익절 +7%"},
+            {"ratio": 0.15, "volume_pct": 1.00, "name": "3차 익절 +15%"},
         ]
         self.executed_targets = set()
 
@@ -754,8 +754,8 @@ class StopLossStrategy:
                 "stop_price": self.entry_price * (1 + self.stop_loss_ratio)
             }
 
-        # 2. 트레일링 스톱
-        if self.trailing_stop:
+        # 2. 트레일링 스톱 (최고가가 진입가를 초과한 이후에만 작동)
+        if self.trailing_stop and self.highest_price > self.entry_price:
             trailing_threshold = self.highest_price * (1 + self.trailing_ratio)
             if current_price <= trailing_threshold:
                 return True, {

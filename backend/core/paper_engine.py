@@ -2,7 +2,6 @@
 Paper Trading Engine — 실시간 데이터 기반 가상 자동매매 시뮬레이션
 실제 주문 없이 KIS API의 리얼 데이터로 자동매매를 시뮬레이션한다.
 """
-import asyncio
 import logging
 from datetime import datetime, time
 from typing import List, Optional, Tuple
@@ -32,14 +31,22 @@ class PaperConfig:
     min_score: float = 65.0
     market: str = "KR"
     stop_loss_ratio: float = -0.02          # -2% 손절
-    trailing_stop_ratio: float = -0.03      # 최고가 대비 -3%
+    trailing_stop_ratio: float = -0.05      # 최고가 대비 -5% (느슨하게: 1차 익절 후 급락 방어)
     take_profit_targets: List[dict] = field(default_factory=lambda: [
-        {"ratio": 0.03, "name": "1차 익절 +3%"},
-        {"ratio": 0.05, "name": "2차 익절 +5%"},
-        {"ratio": 0.10, "name": "3차 익절 +10%"},
+        {"ratio": 0.03, "volume_pct": 0.33, "name": "1차 익절 +3%"},   # 잔여의 1/3 — 빠른 확정
+        {"ratio": 0.07, "volume_pct": 0.50, "name": "2차 익절 +7%"},   # 잔여의 1/2
+        {"ratio": 0.15, "volume_pct": 1.00, "name": "3차 익절 +15%"},  # 전량
     ])
-    max_holding_hours: int = 24 * 5         # 최대 5일 보유
-    commission_rate: float = 0.001          # 0.1%
+    stop_loss_targets: List[dict] = field(default_factory=lambda: [
+        {"ratio": -0.01, "volume_pct": 0.33, "name": "1차 손절 -1%"},  # 잔여의 1/3
+        {"ratio": -0.02, "volume_pct": 1.00, "name": "2차 손절 -2%"},  # 전량
+    ])
+    # 진입 필터 (get_volume_rank 기준)
+    entry_min_change_rate: float = 3.0    # 등락률 하한 (%)
+    entry_max_change_rate: float = 15.0   # 등락률 상한 (%) — 과열 제외
+    entry_min_volume: int = 100_000       # 최소 거래량 (주)
+    max_holding_hours: int = 24 * 5       # 최대 5일 보유
+    commission_rate: float = 0.001        # 0.1%
 
 
 # ── 인메모리 포지션 레코드 ────────────────────────────────────
@@ -56,6 +63,10 @@ class PaperPosition:
     quantity: int
     highest_price: float
     entry_score: float = 0.0
+    executed_tp_targets: set = field(default_factory=set)  # 실행된 익절 단계 인덱스
+    executed_sl_targets: set = field(default_factory=set)  # 실행된 손절 단계 인덱스
+    dynamic_stop_price: float = 0.0  # 동적 손절가 (1차 익절 후 본전으로 이동)
+    breakeven_active: bool = False    # 1차 익절 후 break-even 발동 여부
 
     def update_highest(self, price: float):
         self.highest_price = max(self.highest_price, price)
@@ -132,30 +143,59 @@ class PaperEngine:
     def _already_holding(self, code: str) -> bool:
         return any(p.code == code for p in self.open_positions)
 
-    def _check_exit(self, pos: PaperPosition, current_price: float) -> Tuple[bool, str]:
-        """청산 조건 체크 (backtest engine.check_exit_conditions 이식)"""
+    def _passes_entry_filter(self, surge_item: dict) -> bool:
+        """진입 조건 필터: 과열/동력부족/유동성 부족 종목 제외"""
+        change_rate = surge_item.get("change_rate", 0)
+        volume = surge_item.get("volume", 0)
+        if not (self.config.entry_min_change_rate <= change_rate <= self.config.entry_max_change_rate):
+            logger.debug(f"[Filter] {surge_item.get('code')} 등락률 {change_rate:.1f}% 제외 "
+                         f"(허용: {self.config.entry_min_change_rate}~{self.config.entry_max_change_rate}%)")
+            return False
+        if volume < self.config.entry_min_volume:
+            logger.debug(f"[Filter] {surge_item.get('code')} 거래량 {volume:,}주 부족 제외")
+            return False
+        return True
+
+    def _check_exit(self, pos: PaperPosition, current_price: float) -> Tuple[bool, str, float]:
+        """청산 조건 체크 → (should_exit, reason, volume_pct)
+        volume_pct: 잔여 수량 기준 청산 비율 (1.0 = 전량)
+        """
         pos.update_highest(current_price)
         ratio = (current_price - pos.entry_price) / pos.entry_price
 
-        # 1. 익절
-        for tgt in self.config.take_profit_targets:
+        # 1. 분할 익절 (이미 실행된 단계는 건너뜀)
+        for i, tgt in enumerate(self.config.take_profit_targets):
+            if i in pos.executed_tp_targets:
+                continue
             if ratio >= tgt["ratio"]:
-                return True, tgt["name"]
+                pos.executed_tp_targets.add(i)
+                return True, tgt["name"], tgt["volume_pct"]
 
-        # 2. 고정 손절
-        if ratio <= self.config.stop_loss_ratio:
-            return True, "fixed_stop_loss"
+        # 2. 손절 분기
+        if pos.breakeven_active:
+            # Phase B: 1차 익절 후 → break-even 손절 전량
+            stop_ratio = (pos.dynamic_stop_price - pos.entry_price) / pos.entry_price
+            if ratio <= stop_ratio:
+                return True, "손절(본전)", 1.0
+        else:
+            # Phase A: 1차 익절 전 → 분할 손절
+            for i, sl in enumerate(self.config.stop_loss_targets):
+                if i in pos.executed_sl_targets:
+                    continue
+                if ratio <= sl["ratio"]:
+                    pos.executed_sl_targets.add(i)
+                    return True, sl["name"], sl["volume_pct"]
 
         # 3. 트레일링 스톱 (최고가 경신 후 하락 시)
         trail_threshold = pos.highest_price * (1 + self.config.trailing_stop_ratio)
         if current_price <= trail_threshold and pos.highest_price > pos.entry_price:
-            return True, "trailing_stop"
+            return True, "trailing_stop", 1.0
 
         # 4. 최대 보유 시간
         if pos.holding_hours() >= self.config.max_holding_hours:
-            return True, f"time_limit_{self.config.max_holding_hours}h"
+            return True, f"time_limit_{self.config.max_holding_hours}h", 1.0
 
-        return False, ""
+        return False, "", 0.0
 
     # ── 현재가 조회 ──────────────────────────────────────────
 
@@ -209,6 +249,7 @@ class PaperEngine:
                     quantity=r.quantity,
                     highest_price=r.highest_price,
                     entry_score=r.entry_score,
+                    dynamic_stop_price=r.entry_price * (1 + self.config.stop_loss_ratio),
                 )
                 for r in rows
             ]
@@ -304,9 +345,9 @@ class PaperEngine:
             if price is None:
                 continue
             current_prices[pos.code] = price
-            should_exit, reason = self._check_exit(pos, price)
+            should_exit, reason, volume_pct = self._check_exit(pos, price)
             if should_exit:
-                await self._do_close(pos, price, reason, db)
+                await self._do_close(pos, price, reason, volume_pct, db)
 
         # 2. 신규 진입 스캔
         if self._can_open():
@@ -317,15 +358,65 @@ class PaperEngine:
         await self._save_account(db)
 
     async def _do_close(self, pos: PaperPosition, price: float, reason: str,
-                        db: AsyncSession) -> None:
-        revenue = price * pos.quantity
-        commission = self._get_commission(price, pos.quantity)
-        self.cash += revenue - commission
-        self.open_positions.remove(pos)
-        self.closed_today += 1
+                        volume_pct: float, db: AsyncSession) -> None:
+        """청산 실행 (volume_pct < 1.0이면 부분 청산, 잔여 수량 기준)"""
+        close_qty = pos.quantity if volume_pct >= 1.0 else max(1, int(pos.quantity * volume_pct))
+        close_qty = min(close_qty, pos.quantity)
+
+        commission = self._get_commission(price, close_qty)
+        self.cash += price * close_qty - commission
+
         pl_pct = (price - pos.entry_price) / pos.entry_price * 100
-        logger.info(f"[Paper] CLOSE {pos.code} @ {price:,.0f}원 ({pl_pct:+.2f}%) — {reason}")
-        await self._close_position_in_db(pos, price, reason, db)
+        is_full = (close_qty >= pos.quantity)
+
+        if is_full:
+            self.open_positions.remove(pos)
+            self.closed_today += 1
+            logger.info(f"[Paper] CLOSE {pos.code} x{close_qty} @ {price:,.0f}원 ({pl_pct:+.2f}%) — {reason}")
+            await self._close_position_in_db(pos, price, reason, db)
+        else:
+            pos.quantity -= close_qty
+            # TP 부분청산일 때만 break-even 이동 (SL 부분청산은 이동 안 함)
+            tp_names = {tgt["name"] for tgt in self.config.take_profit_targets}
+            if reason in tp_names and not pos.breakeven_active:
+                pos.dynamic_stop_price = max(pos.dynamic_stop_price, pos.entry_price)
+                pos.breakeven_active = True
+                logger.info(f"[Paper] PARTIAL(TP) {pos.code} x{close_qty} → 잔여 x{pos.quantity} @ {price:,.0f}원 ({pl_pct:+.2f}%) — {reason} | 손절가 → 본전")
+            else:
+                logger.info(f"[Paper] PARTIAL(SL) {pos.code} x{close_qty} → 잔여 x{pos.quantity} @ {price:,.0f}원 ({pl_pct:+.2f}%) — {reason}")
+            await self._record_partial_close(pos, price, reason, close_qty, pl_pct, db)
+
+    async def _record_partial_close(self, pos: PaperPosition, price: float, reason: str,
+                                    qty: int, pl_pct: float, db: AsyncSession) -> None:
+        """부분 익절 기록: CLOSED 행 신규 생성 + OPEN 행 수량 업데이트"""
+        from ..db.models import PaperTrade
+        from datetime import timezone
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        pl = (price - pos.entry_price) * qty
+        # 부분 체결 내역 저장 (별도 CLOSED 레코드)
+        row = PaperTrade(
+            code=pos.code,
+            name=pos.name,
+            market=pos.market,
+            entry_time=pos.entry_time,
+            entry_price=pos.entry_price,
+            quantity=qty,
+            highest_price=pos.highest_price,
+            entry_score=pos.entry_score,
+            status="CLOSED",
+            exit_time=now,
+            exit_price=price,
+            exit_reason=reason,
+            profit_loss=round(pl, 2),
+            profit_loss_pct=round(pl_pct, 2),
+        )
+        db.add(row)
+        # OPEN 행 수량 업데이트 (서버 재시작 시 잔여 수량으로 복원)
+        if pos.db_id:
+            open_row = await db.get(PaperTrade, pos.db_id)
+            if open_row:
+                open_row.quantity = pos.quantity
+        await db.commit()
 
     async def _scan_and_buy(self, db: AsyncSession, current_prices: dict) -> None:
         from .signal_service import generate_entry_signals_bulk
@@ -334,7 +425,10 @@ class PaperEngine:
         try:
             surge = await get_kis_client().get_volume_rank(limit=50)
             name_map = {s["code"]: s.get("name", "") for s in surge}
-            codes = [s["code"] for s in surge if not self._already_holding(s["code"])]
+            codes = [
+                s["code"] for s in surge
+                if not self._already_holding(s["code"]) and self._passes_entry_filter(s)
+            ]
             if not codes:
                 return
 
@@ -376,6 +470,7 @@ class PaperEngine:
             quantity=qty,
             highest_price=price,
             entry_score=signal.get("score", 0.0),
+            dynamic_stop_price=price * (1 + self.config.stop_loss_ratio),
         )
         self.open_positions.append(pos)
         logger.info(f"[Paper] BUY {pos.code} x{qty} @ {price:,.0f}원 (score={pos.entry_score:.0f})")
@@ -447,6 +542,71 @@ class PaperEngine:
 
     def get_positions(self) -> list:
         return [p.to_dict() for p in self.open_positions]
+
+    async def open_position_manually(self, code: str, name: str, entry_price: float,
+                                     quantity: int, db: AsyncSession) -> dict:
+        """수동 포지션 추가.
+
+        Args:
+            quantity: 0이면 config 기준으로 자동 계산
+        Raises:
+            ValueError: 포지션 한도 초과 / 현금 부족 / 수량 0
+        """
+        from datetime import timezone
+
+        if not self._can_open():
+            raise ValueError(f"최대 포지션 수({self.config.max_positions})에 도달했습니다")
+
+        qty = quantity if quantity > 0 else self._calculate_position_size(entry_price)
+        if qty <= 0:
+            raise ValueError("수량이 0입니다. 진입가나 현금 잔액을 확인하세요")
+
+        cost = entry_price * qty + self._get_commission(entry_price, qty)
+        if cost > self.cash:
+            raise ValueError(f"현금 부족 (필요: {cost:,.0f}원, 보유: {self.cash:,.0f}원)")
+
+        self.cash -= cost
+        pos = PaperPosition(
+            db_id=None,
+            code=code,
+            name=name or code,
+            market=self.config.market,
+            entry_time=datetime.now(timezone.utc).replace(tzinfo=None),
+            entry_price=entry_price,
+            quantity=qty,
+            highest_price=entry_price,
+            entry_score=0.0,
+            dynamic_stop_price=entry_price * (1 + self.config.stop_loss_ratio),
+        )
+        self.open_positions.append(pos)
+        logger.info(f"[Paper] MANUAL BUY {pos.code} x{qty} @ {entry_price:,.0f}원")
+        await self._save_open_position(pos, db)
+        await self._save_account(db)
+        return pos.to_dict()
+
+    async def close_all_positions(self, db: AsyncSession) -> list:
+        """전체 포지션 일괄 청산 — 각 종목 현재가(조회 실패 시 진입가)로 즉시 전량 청산"""
+        results = []
+        for pos in self.open_positions[:]:
+            price = await self._get_current_price(pos.code, pos.market)
+            if price is None:
+                price = pos.entry_price
+            await self._do_close(pos, price, "일괄청산", 1.0, db)
+            results.append({"code": pos.code, "price": price, "reason": "일괄청산"})
+        await self._save_account(db)
+        return results
+
+    async def close_position_manually(self, code: str, db: AsyncSession) -> Optional[dict]:
+        """수동 강제 청산 — 현재가(조회 실패 시 진입가)로 즉시 전량 청산"""
+        pos = next((p for p in self.open_positions if p.code == code), None)
+        if pos is None:
+            return None
+        price = await self._get_current_price(pos.code, pos.market)
+        if price is None:
+            price = pos.entry_price  # 현재가 조회 실패 시 진입가로 처리
+        await self._do_close(pos, price, "수동청산", 1.0, db)
+        await self._save_account(db)
+        return {"code": code, "price": price, "reason": "수동청산"}
 
     async def get_trades(self, db: AsyncSession, limit: int = 50) -> list:
         from ..db.models import PaperTrade

@@ -202,7 +202,7 @@ export default function OptimizeDashboard({ market }: OptimizeDashboardProps) {
                                     <div className="bg-slate-800/50 p-4 rounded-lg">
                                         <div className="text-xs text-slate-400 mb-1">익절 비율</div>
                                         <div className="text-2xl font-bold text-green-400">
-                                            +{(result.best_params.take_profit_ratio * 100).toFixed(1)}%
+                                            +{((result.best_params.take_profit_targets?.[1]?.ratio ?? 0) * 100).toFixed(1)}%
                                         </div>
                                     </div>
                                     <div className="bg-slate-800/50 p-4 rounded-lg">
@@ -280,8 +280,8 @@ export default function OptimizeDashboard({ market }: OptimizeDashboardProps) {
                                                 <span className="text-lg font-bold text-slate-300">
                                                     #{idx + 1}
                                                 </span>
-                                                <span className={`text-xl font-bold ${item.performance.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                                    ROI: {item.performance.roi >= 0 ? '+' : ''}{item.performance.roi?.toFixed(2)}%
+                                                <span className={`text-xl font-bold ${(item.roi ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                    ROI: {(item.roi ?? 0) >= 0 ? '+' : ''}{(item.roi ?? 0).toFixed(2)}%
                                                 </span>
                                             </div>
                                             <div className="grid grid-cols-4 gap-2 text-xs">
@@ -291,7 +291,7 @@ export default function OptimizeDashboard({ market }: OptimizeDashboardProps) {
                                                 </div>
                                                 <div>
                                                     <span className="text-slate-500">익절:</span>
-                                                    <span className="ml-1 font-mono">+{(item.params.take_profit_ratio * 100).toFixed(1)}%</span>
+                                                    <span className="ml-1 font-mono">+{((item.params.take_profit_targets?.[1]?.ratio ?? 0) * 100).toFixed(1)}%</span>
                                                 </div>
                                                 <div>
                                                     <span className="text-slate-500">보유:</span>
@@ -317,7 +317,7 @@ export default function OptimizeDashboard({ market }: OptimizeDashboardProps) {
                                 onClick={() => {
                                     if (result.best_params) {
                                         const params = result.best_params;
-                                        alert(`최적 파라미터:\n손절: ${(params.stop_loss_ratio * 100).toFixed(1)}%\n익절: ${(params.take_profit_ratio * 100).toFixed(1)}%\n보유 기간: ${params.max_holding_days}일\n진입 점수: ${params.min_entry_score}점`);
+                                        alert(`최적 파라미터:\n손절: ${(params.stop_loss_ratio * 100).toFixed(1)}%\n익절: ${((params.take_profit_targets?.[1]?.ratio ?? 0) * 100).toFixed(1)}%\n보유 기간: ${params.max_holding_days}일\n진입 점수: ${params.min_entry_score}점`);
                                     }
                                 }}
                                 className="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-lg text-sm font-semibold transition-colors"

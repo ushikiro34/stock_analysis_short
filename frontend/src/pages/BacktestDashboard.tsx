@@ -127,6 +127,7 @@ export default function BacktestDashboard({ market }: BacktestDashboardProps) {
                             <option value="technical">기술적 지표</option>
                             <option value="pattern">패턴 분석</option>
                             <option value="rsi_golden_cross">RSI 골든크로스 ⭐</option>
+                            <option value="weekly_rsi_swing">주봉 RSI 스윙 🆕</option>
                         </select>
                     </div>
 

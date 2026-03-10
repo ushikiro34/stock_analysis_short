@@ -821,6 +821,142 @@ class TimeBasedExit:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 주봉 RSI 스윙 전략 (신규)
+# ═══════════════════════════════════════════════════════════════
+
+class WeeklyRSISwingSignal:
+    """
+    주봉 RSI 30 돌파 + 일봉 MA50/200 골든크로스 스윙 전략
+
+    기존 RSIGoldenCrossSignal과의 핵심 차이:
+    - RSI 기준: 주봉(weekly) vs 기존 일봉(daily)
+    - 진입 순서: RSI 30 돌파 먼저 → 골든크로스는 이후 확인 조건
+    - 골든크로스 없을 때: 방어 모드(MEDIUM) vs 기존은 HOLD 반환
+    - 보유 성격: 스윙/중기 vs 단타
+
+    진입 흐름:
+        주봉 RSI 30 상향 돌파 → 진입
+            └─ 골든크로스 있음 → HIGH (추가 매수/홀딩)
+            └─ 골든크로스 없음 → MEDIUM (하락 대비, 방어적 홀딩)
+    """
+
+    MIN_BARS = 310  # 200일 MA + 주봉 RSI 14 × 5일 + 여유
+
+    def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
+        if len(ohlcv_data) < self.MIN_BARS:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": [f"데이터 부족 (최소 {self.MIN_BARS}일, 현재 {len(ohlcv_data)}일)"],
+            }
+
+        closes = ohlcv_data["Close"]
+        volumes = ohlcv_data["Volume"]
+        score = 0
+        reasons = []
+
+        # ── 1. 주봉 RSI 계산 ────────────────────────────────────
+        try:
+            weekly_closes = closes.resample("W").last().dropna()
+            weekly_rsi = IndicatorEngine.calculate_rsi(weekly_closes, 14).dropna()
+        except Exception as e:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": [f"주봉 RSI 계산 실패: {e}"],
+            }
+
+        if len(weekly_rsi) < 6:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": ["주봉 데이터 부족"],
+            }
+
+        curr_w_rsi = float(weekly_rsi.iloc[-1])
+
+        # 주봉 RSI 30 돌파: 최근 3주 이내
+        rsi_crossed = False
+        for i in range(1, min(4, len(weekly_rsi))):
+            if float(weekly_rsi.iloc[-i - 1]) < 30 <= float(weekly_rsi.iloc[-i]):
+                rsi_crossed = True
+                reasons.append(f"주봉 RSI 30 상향 돌파 ({i}주 전, 현재 {curr_w_rsi:.1f})")
+                score += 50
+                break
+
+        if not rsi_crossed:
+            recent_min = float(weekly_rsi.iloc[-5:].min())
+            if 30 <= curr_w_rsi < 50 and recent_min < 30:
+                # 5주 내 30 하회 후 회복 중
+                reasons.append(f"주봉 RSI 30 회복 중 ({curr_w_rsi:.1f}, 최근 저점 {recent_min:.1f})")
+                score += 35
+            elif 30 <= curr_w_rsi < 50:
+                reasons.append(f"주봉 RSI 30~50 구간 ({curr_w_rsi:.1f})")
+                score += 20
+            else:
+                return {
+                    "signal": SignalType.HOLD,
+                    "strength": SignalStrength.LOW,
+                    "score": 0,
+                    "reasons": [f"주봉 RSI 조건 미충족 ({curr_w_rsi:.1f})"],
+                    "weekly_rsi": curr_w_rsi,
+                }
+
+        # ── 2. 일봉 MA50/MA200 골든크로스 확인 ─────────────────
+        ma50 = IndicatorEngine.calculate_ma(closes, 50)
+        ma200 = IndicatorEngine.calculate_ma(closes, 200)
+        has_golden_cross = float(ma50.iloc[-1]) > float(ma200.iloc[-1])
+
+        if has_golden_cross:
+            gc_pct = (float(ma50.iloc[-1]) - float(ma200.iloc[-1])) / float(ma200.iloc[-1]) * 100
+            reasons.append(f"골든크로스 확인 → 홀딩/추가 매수 (MA50-MA200 +{gc_pct:.2f}%)")
+            score += 35
+            # 최근 30일 이내 골든크로스 발생
+            for i in range(1, min(31, len(ma50))):
+                if float(ma50.iloc[-i]) > float(ma200.iloc[-i]) and float(ma50.iloc[-i - 1]) <= float(ma200.iloc[-i - 1]):
+                    reasons.append(f"최근 골든크로스 발생 ({i}일 전) → 강세 초입")
+                    score += 10
+                    break
+        else:
+            dc_pct = (float(ma200.iloc[-1]) - float(ma50.iloc[-1])) / float(ma200.iloc[-1]) * 100
+            reasons.append(f"골든크로스 미확인 (MA50 < MA200, -{dc_pct:.2f}%) → 하락 대비 필요")
+            # 골든크로스 없어도 RSI 조건 충족 시 MEDIUM 신호 유지 (기존 전략과의 핵심 차이)
+            score += 5
+
+        # ── 3. 거래량 확인 ──────────────────────────────────────
+        vol_ma20 = float(volumes.tail(20).mean())
+        vol_ratio = float(volumes.iloc[-1]) / vol_ma20 if vol_ma20 > 0 else 0
+        if vol_ratio >= 1.5:
+            reasons.append(f"거래량 증가 ({vol_ratio:.1f}배)")
+            score += 15
+        elif vol_ratio >= 1.0:
+            reasons.append(f"거래량 보통 ({vol_ratio:.1f}배)")
+            score += 5
+
+        # ── 신호 결정 ───────────────────────────────────────────
+        if score >= 70:
+            strength, signal = SignalStrength.HIGH, SignalType.BUY
+        elif score >= 45:
+            strength, signal = SignalStrength.MEDIUM, SignalType.BUY
+        else:
+            strength, signal = SignalStrength.LOW, SignalType.HOLD
+
+        return {
+            "signal": signal,
+            "strength": strength,
+            "score": score,
+            "reasons": reasons,
+            "weekly_rsi": curr_w_rsi,
+            "golden_cross": has_golden_cross,
+            "ma50": float(ma50.iloc[-1]),
+            "ma200": float(ma200.iloc[-1]),
+        }
+
+
+# ═══════════════════════════════════════════════════════════════
 # 통합 신호 매니저
 # ═══════════════════════════════════════════════════════════════
 
@@ -832,6 +968,7 @@ class SignalManager:
         self.technical_signal = TechnicalBreakoutSignal()
         self.pattern_signal = PricePatternSignal()
         self.rsi_golden_cross_signal = RSIGoldenCrossSignal()
+        self.weekly_rsi_swing_signal = WeeklyRSISwingSignal()
 
     def generate_entry_signal(self, ohlcv_data: pd.DataFrame, strategy: str = "combined") -> Dict:
         """
@@ -852,6 +989,8 @@ class SignalManager:
             return self.pattern_signal.check_signal(ohlcv_data)
         elif strategy == "rsi_golden_cross":
             return self.rsi_golden_cross_signal.check_signal(ohlcv_data)
+        elif strategy == "weekly_rsi_swing":
+            return self.weekly_rsi_swing_signal.check_signal(ohlcv_data)
         else:  # combined
             volume_result = self.volume_signal.check_signal(ohlcv_data)
             technical_result = self.technical_signal.check_signal(ohlcv_data)

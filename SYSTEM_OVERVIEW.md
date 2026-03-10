@@ -1,4 +1,4 @@
-# 매매 전략 시스템 변경 이력 (2026-03-08)
+# 매매 전략 시스템 변경 이력 (최종 업데이트: 2026-03-10)
 
 ## 개요
 
@@ -183,3 +183,55 @@ async def get_full_day_minute_chart(self, code: str, since_hour: str = "090000")
 - **트레일링 스톱**: 최고가 대비 -5% (변경 없음). Phase A/B와 별개로 동작하며 Phase B에서는 비활성.
 - **분할 손절은 Phase A에서만**: `breakeven_active=True`가 되면 분할 손절 로직 비활성, 본전 단일 손절로 대체.
 - **KIS API 시간 제약**: 장 마감 후 토큰 갱신 불가로 `compare_strategies` 테스트는 장중에만 가능.
+
+---
+
+# 백테스트 엔진 버그 수정 (2026-03-10)
+
+> 상세 내용: `BACKTEST_ENGINE_FIXES.md`
+
+## 수정 내용
+
+### 1. `backend/backtest/engine.py` — 전략별 데이터 윈도우 동적 설정
+
+신규 진입 체크 시 `tail(120)` 하드코딩으로 RSI 계열 전략이 항상 "데이터 부족" 반환하던 문제 수정.
+
+```python
+# 수정 전
+historical_data = ohlcv_data.iloc[:i+1].tail(120)
+
+# 수정 후
+_strategy_window = {'rsi_golden_cross': 250, 'weekly_rsi_swing': 350}
+data_window = _strategy_window.get(config.entry_strategy, 120)
+historical_data = ohlcv_data.iloc[:i+1].tail(data_window)
+```
+
+### 2. `backend/backtest/engine.py` — 승률 계산 및 손익 합산 버그 수정
+
+분할 청산(TP/SL)이 발생할 때마다 `winning_trades`가 중복 집계되어 승률이 100% 초과하던 버그 수정.
+아울러 부분 청산 실현 손익이 최종 `profit_loss`에 누락되던 문제도 함께 수정.
+
+| 수정 항목 | 수정 전 | 수정 후 |
+|---------|--------|--------|
+| `Trade.partial_profit_loss` 필드 | 없음 | 부분 청산 누적 손익 저장 |
+| `Trade.close()` 손익 계산 | 잔여 수량만 계산 | 부분청산 누적 + 최종 청산 합산 |
+| `close_position()` 승/패 집계 | 부분청산마다 `winning_trades += 1` | 포지션 완전 종료 시에만 집계 |
+
+**수정 전후 승률 비교 (010170, 730일 백테스트)**
+
+| 전략 | 수정 전 승률 | 수정 후 승률 | 수정 후 ROI | PF |
+|------|------------|------------|------------|-----|
+| combined | 187.5% ❌ | 50.0% ✅ | 9.58% | 1.68 |
+| rsi_golden_cross | 미작동(0건) ❌ | 46.0% ✅ | 90.6% | 2.03 |
+| weekly_rsi_swing | 미작동(0건) ❌ | 60.0% ✅ | 9.23% | 5.42 |
+
+## 신규 전략: `weekly_rsi_swing`
+
+주봉 RSI 30 돌파 후 일봉 MA50/200 골든크로스 확인 스윙 전략. `backend/core/signals.py`에 `WeeklyRSISwingSignal` 클래스로 구현.
+
+| 항목 | 내용 |
+|------|------|
+| 최소 데이터 | 310일 (MA200 + 주봉RSI 버퍼) |
+| 진입 조건 | 주봉 RSI가 30 이하에서 30 초과로 상승 |
+| 확인 조건 | 일봉 MA50 > MA200 (골든크로스) → 점수 +35 추가 |
+| 관련 파일 | `signals.py`, `signal_service.py` (days=350 분기) |

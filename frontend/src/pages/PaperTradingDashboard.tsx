@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2, Timer, X, Info, Plus } from 'lucide-react';
+import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2, Timer, X, Info, Plus, Search } from 'lucide-react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
 import { paperTrading, type PaperStatus, type PaperPosition, type PaperTrade, type PaperHistoryPoint, type PaperStartConfig } from '../lib/api';
 
@@ -163,7 +163,7 @@ function Stopwatch({ startedAt, elapsedSeconds }: { startedAt: string | null; el
     );
 }
 
-export default function PaperTradingDashboard() {
+export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigateToStock?: (name: string) => void }) {
     const [status, setStatus] = useState<PaperStatus | null>(null);
     const [positions, setPositions] = useState<PaperPosition[]>([]);
     const [trades, setTrades] = useState<PaperTrade[]>([]);
@@ -427,6 +427,7 @@ export default function PaperTradingDashboard() {
                                 <option value="volume">거래량 기반</option>
                                 <option value="technical">기술적 지표</option>
                                 <option value="rsi_golden_cross">RSI 골든크로스</option>
+                                <option value="weekly_rsi_swing">주봉 RSI 스윙</option>
                             </select>
                         </label>
                         <label className="flex flex-col gap-1">
@@ -581,6 +582,16 @@ export default function PaperTradingDashboard() {
                                         <span className="font-semibold text-sm">{p.name}({p.code})</span>
                                         <div className="flex items-center gap-2">
                                             {p.unrealized_pnl_pct !== null && <PnlBadge pct={p.unrealized_pnl_pct} />}
+                                            {onNavigateToStock && (
+                                                <button
+                                                    onClick={() => onNavigateToStock(p.name)}
+                                                    title="주식 분석 탭에서 검색"
+                                                    className="flex items-center gap-1 px-2 py-0.5 text-xs bg-blue-900/40 hover:bg-blue-700/60 border border-blue-700/50 rounded text-blue-300 transition-colors"
+                                                >
+                                                    <Search size={10} />
+                                                    분석
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={() => handleClosePosition(p.code, p.name)}
                                                 disabled={closingCode === p.code}

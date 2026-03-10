@@ -106,8 +106,13 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
             "timestamp": 생성 시각
         }
     """
-    # RSI Golden Cross 전략은 200일 데이터 필요
-    days = 250 if strategy == "rsi_golden_cross" else 120
+    # 전략별 필요 데이터 기간
+    if strategy == "weekly_rsi_swing":
+        days = 350   # 주봉 RSI(14주) + MA200 + 버퍼
+    elif strategy == "rsi_golden_cross":
+        days = 250   # MA200 + 버퍼
+    else:
+        days = 120
 
     # OHLCV 데이터 수집
     ohlcv_data = await collect_ohlcv_data(code, market, days=days)

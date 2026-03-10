@@ -52,6 +52,7 @@ class Trade:
     executed_sl_targets: set = field(default_factory=set)
     dynamic_stop_price: float = 0.0  # 동적 손절가 (1차 익절 후 본전으로 이동)
     breakeven_active: bool = False    # 1차 익절 후 break-even 발동 여부
+    partial_profit_loss: float = 0.0  # 부분 청산에서 실현된 누적 손익
 
     def __post_init__(self):
         self.original_quantity = self.quantity
@@ -66,15 +67,18 @@ class Trade:
         self.lowest_price = min(self.lowest_price, current_price)
 
     def close(self, exit_time: datetime, exit_price: float, exit_reason: str):
-        """거래 청산"""
+        """거래 청산 (분할 청산 누적 손익 포함)"""
         self.exit_time = exit_time
         self.exit_price = exit_price
         self.exit_reason = exit_reason
         self.status = TradeStatus.CLOSED
 
-        # 손익 계산
-        self.profit_loss = (exit_price - self.entry_price) * self.quantity
-        self.profit_loss_pct = ((exit_price - self.entry_price) / self.entry_price) * 100
+        # 총 손익 = 부분 청산 누적 손익 + 최종 청산 손익
+        final_pl = (exit_price - self.entry_price) * self.quantity
+        self.profit_loss = self.partial_profit_loss + final_pl
+        # 수익률 = 총 손익 / 최초 진입 비용 (original_quantity 기준)
+        total_cost = self.entry_price * self.original_quantity
+        self.profit_loss_pct = (self.profit_loss / total_cost * 100) if total_cost > 0 else 0
 
     def to_dict(self) -> Dict:
         """딕셔너리 변환"""
@@ -228,6 +232,7 @@ class Backtester:
             trade.quantity = close_qty
             trade.close(exit_time, exit_price, exit_reason)
             self.open_positions.remove(trade)
+            # 총 손익(부분청산 누적 포함) 기준으로 승/패 판정
             if trade.profit_loss > 0:
                 self.winning_trades += 1
             else:
@@ -236,6 +241,8 @@ class Backtester:
                        f"({trade.profit_loss_pct:+.2f}%) - {exit_reason}")
         else:
             pl_pct = (exit_price - trade.entry_price) / trade.entry_price * 100
+            # 부분 청산 실현 손익 누적 (수수료 제외 단순 계산)
+            trade.partial_profit_loss += (exit_price - trade.entry_price) * close_qty
             trade.quantity -= close_qty
             # TP 부분청산일 때만 break-even 이동 (SL 부분청산은 이동 안 함)
             tp_names = {tgt["name"] for tgt in self.config.take_profit_targets}
@@ -247,7 +254,7 @@ class Backtester:
             else:
                 logger.info(f"[BT] PARTIAL(SL): {trade.code} x{close_qty} → 잔여 x{trade.quantity} "
                            f"@ ${exit_price:.2f} ({pl_pct:+.2f}%) - {exit_reason}")
-            self.winning_trades += 1
+            # 부분 청산은 win/loss 카운트 없음 (포지션 단위로만 집계)
 
     def check_exit_conditions(self, trade: Trade, current_time: datetime,
                              current_price: float) -> Tuple[bool, Optional[str], float]:
@@ -531,8 +538,13 @@ async def run_simple_backtest(
 
             # 신규 진입 체크
             if in_period and backtester.can_open_position():
-                # 현재까지의 전체 데이터로 신호 생성 (워밍업 포함, 최근 120일)
-                historical_data = ohlcv_data.iloc[:i+1].tail(120)
+                # 전략별 필요 데이터 기간 (신호 생성에 필요한 최소 bars)
+                _strategy_window = {
+                    'rsi_golden_cross': 250,
+                    'weekly_rsi_swing': 350,
+                }
+                data_window = _strategy_window.get(config.entry_strategy, 120)
+                historical_data = ohlcv_data.iloc[:i+1].tail(data_window)
 
                 signal = backtester.signal_manager.generate_entry_signal(
                     historical_data,

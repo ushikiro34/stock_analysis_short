@@ -593,7 +593,13 @@ function App() {
                     <OptimizeDashboard market={market} />
                 </div>
                 <div className={`h-full ${activeTab === 'paper' ? '' : 'hidden'}`}>
-                    <PaperTradingDashboard />
+                    <PaperTradingDashboard
+                        onNavigateToStock={(name: string) => {
+                            setActiveTab('stocks');
+                            setStockNameInput(name);
+                            setStockFilter(f => ({ ...f, stockName: name }));
+                        }}
+                    />
                 </div>
             </main>
 

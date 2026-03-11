@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { PlayCircle, StopCircle, RotateCcw, TrendingUp, TrendingDown, DollarSign, Activity, Clock, AlertCircle, Loader2, Timer, X, Info, Plus, Search } from 'lucide-react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
-import { paperTrading, type PaperStatus, type PaperPosition, type PaperTrade, type PaperHistoryPoint, type PaperStartConfig } from '../lib/api';
+import { paperTrading, fetchStockAnalyze, type PaperStatus, type PaperPosition, type PaperTrade, type PaperHistoryPoint, type PaperStartConfig, type Market } from '../lib/api';
 
 const REFRESH_INTERVAL = 30_000; // 30초
 
@@ -173,6 +173,7 @@ export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigat
     const [error, setError] = useState<string | null>(null);
     const [config, setConfig] = useState<PaperStartConfig>(DEFAULT_CONFIG);
     const [selectedTrade, setSelectedTrade] = useState<PaperTrade | null>(null);
+    const configInitialized = useRef(false);
 
     const fetchAll = useCallback(async () => {
         try {
@@ -186,6 +187,11 @@ export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigat
             setPositions(p);
             setTrades(t);
             setHistory(h);
+            // 최초 로드 시에만 서버 initial_capital을 config에 반영
+            if (!configInitialized.current) {
+                setConfig(c => ({ ...c, initial_capital: s.initial_capital }));
+                configInitialized.current = true;
+            }
             setError(null);
         } catch {
             setError('서버에 연결할 수 없습니다');
@@ -253,8 +259,38 @@ export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigat
     // ── 수동 포지션 추가 ────────────────────────────────────
     const [showAddForm, setShowAddForm] = useState(false);
     const [addForm, setAddForm] = useState({ code: '', name: '', entry_price: '', quantity: '' });
+    const [addFormMarket, setAddFormMarket] = useState<Market>('KR');
     const [addLoading, setAddLoading] = useState(false);
     const [addError, setAddError] = useState<string | null>(null);
+    const [addPriceFetching, setAddPriceFetching] = useState(false);
+    const [addPriceInfo, setAddPriceInfo] = useState<string | null>(null);
+
+    const fetchCodeInfo = async (code: string) => {
+        const trimmed = code.trim();
+        if (!trimmed) return;
+        setAddPriceFetching(true);
+        setAddPriceInfo(null);
+        try {
+            const d = await fetchStockAnalyze(trimmed, addFormMarket);
+            if (d.error) {
+                setAddPriceInfo('종목 정보 없음');
+                return;
+            }
+            setAddForm(f => ({
+                ...f,
+                name: d.name || f.name,
+                entry_price: String(d.current_price),
+            }));
+            const priceStr = addFormMarket === 'US'
+                ? `$${d.current_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                : `${d.current_price.toLocaleString()}원`;
+            setAddPriceInfo(`${d.name} · 현재가 ${priceStr}`);
+        } catch {
+            setAddPriceInfo('조회 실패');
+        } finally {
+            setAddPriceFetching(false);
+        }
+    };
 
     const handleAddPosition = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -269,6 +305,7 @@ export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigat
                 quantity: addForm.quantity ? parseInt(addForm.quantity) : 0,
             });
             setAddForm({ code: '', name: '', entry_price: '', quantity: '' });
+            setAddPriceInfo(null);
             setShowAddForm(false);
             await fetchAll();
         } catch (e: any) {
@@ -407,54 +444,67 @@ export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigat
                 </div>
             )}
 
-            {/* ── 설정 폼 (중지 상태일 때만) ─────────────────── */}
-            {!status?.is_running && (
-                <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-5">
-                    <h3 className="text-sm font-semibold text-slate-300 mb-4">시뮬레이션 설정</h3>
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                        <label className="flex flex-col gap-1">
-                            <span className="text-slate-400">초기 자본 (원)</span>
-                            <input type="number" value={config.initial_capital}
-                                onChange={e => setConfig(c => ({ ...c, initial_capital: +e.target.value }))}
-                                className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary" />
-                        </label>
-                        <label className="flex flex-col gap-1">
-                            <span className="text-slate-400">전략</span>
-                            <select value={config.strategy}
-                                onChange={e => setConfig(c => ({ ...c, strategy: e.target.value }))}
-                                className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary">
-                                <option value="combined">종합 전략</option>
-                                <option value="volume">거래량 기반</option>
-                                <option value="technical">기술적 지표</option>
-                                <option value="rsi_golden_cross">RSI 골든크로스</option>
-                                <option value="weekly_rsi_swing">주봉 RSI 스윙</option>
-                            </select>
-                        </label>
-                        <label className="flex flex-col gap-1">
-                            <span className="text-slate-400">최소 진입 점수</span>
-                            <input type="number" value={config.min_score} min={50} max={90}
-                                onChange={e => setConfig(c => ({ ...c, min_score: +e.target.value }))}
-                                className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary" />
-                        </label>
-                        <label className="flex flex-col gap-1">
-                            <span className="text-slate-400">최대 동시 보유</span>
-                            <input type="number" value={config.max_positions} min={1} max={10}
-                                onChange={e => setConfig(c => ({ ...c, max_positions: +e.target.value }))}
-                                className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary" />
-                        </label>
-                        <label className="flex flex-col gap-1">
-                            <span className="text-slate-400">종목당 투자 비율</span>
-                            <select value={config.position_size_pct}
-                                onChange={e => setConfig(c => ({ ...c, position_size_pct: +e.target.value }))}
-                                className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary">
-                                <option value={0.2}>20%</option>
-                                <option value={0.3}>30%</option>
-                                <option value={0.5}>50%</option>
-                            </select>
-                        </label>
-                    </div>
+            {/* ── 설정 폼 ─────────────────────────────────────── */}
+            <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-slate-300">시뮬레이션 설정</h3>
+                    {status?.is_running && (
+                        <span className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-full px-3 py-1">
+                            <AlertCircle size={11} />
+                            실행 중 · 설정 변경 시 초기화 후 재시작 필요
+                        </span>
+                    )}
                 </div>
-            )}
+                <div className="grid grid-cols-3 gap-4 text-sm">
+                    <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">초기 자본 (원)</span>
+                        <input type="number" value={config.initial_capital}
+                            disabled={status?.is_running}
+                            onChange={e => setConfig(c => ({ ...c, initial_capital: +e.target.value }))}
+                            className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">전략</span>
+                        <select value={config.strategy}
+                            disabled={status?.is_running}
+                            onChange={e => setConfig(c => ({ ...c, strategy: e.target.value }))}
+                            className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed">
+                            <option value="combined">종합 전략</option>
+                            <option value="volume">거래량 기반</option>
+                            <option value="technical">기술적 지표</option>
+                            <option value="rsi_golden_cross">RSI 골든크로스</option>
+                            <option value="weekly_rsi_swing">주봉 RSI 스윙</option>
+                        </select>
+                    </label>
+                    <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">최소 진입 점수</span>
+                        <input type="number" value={config.min_score} min={50} max={90}
+                            disabled={status?.is_running}
+                            onChange={e => setConfig(c => ({ ...c, min_score: +e.target.value }))}
+                            className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">최대 동시 보유</span>
+                        <input type="number" value={config.max_positions} min={1} max={10}
+                            disabled={status?.is_running}
+                            onChange={e => setConfig(c => ({ ...c, max_positions: +e.target.value }))}
+                            className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">종목당 투자 비율</span>
+                        <select value={config.position_size_pct}
+                            disabled={status?.is_running}
+                            onChange={e => setConfig(c => ({ ...c, position_size_pct: +e.target.value }))}
+                            className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed">
+                            <option value={0.1}>10%</option>
+                            <option value={0.15}>15%</option>
+                            <option value={0.2}>20%</option>
+                            <option value={0.3}>30%</option>
+                            <option value={0.5}>50%</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
 
             {/* ── 계좌 요약 카드 ──────────────────────────────── */}
             {status && (
@@ -511,6 +561,33 @@ export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigat
                     {/* 수동 추가 폼 */}
                     {showAddForm && (
                         <form onSubmit={handleAddPosition} className="mb-3 bg-slate-900/60 border border-slate-600 rounded-lg p-3 space-y-2">
+                            {/* 시장 선택 */}
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-slate-400">시장</span>
+                                <div className="flex items-center gap-1 bg-slate-800 border border-slate-600 rounded p-0.5">
+                                    {(['KR', 'US'] as Market[]).map(m => (
+                                        <button
+                                            key={m} type="button"
+                                            onClick={() => { setAddFormMarket(m); setAddPriceInfo(null); }}
+                                            className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-all ${
+                                                addFormMarket === m
+                                                    ? m === 'KR' ? 'bg-blue-500/25 text-blue-400' : 'bg-purple-500/25 text-purple-400'
+                                                    : 'text-slate-500 hover:text-slate-300'
+                                            }`}
+                                        >{m}</button>
+                                    ))}
+                                </div>
+                                {/* 종목 조회 결과 인라인 표시 */}
+                                {addPriceFetching && (
+                                    <span className="text-xs text-slate-400 flex items-center gap-1">
+                                        <Loader2 size={11} className="animate-spin" /> 조회 중...
+                                    </span>
+                                )}
+                                {!addPriceFetching && addPriceInfo && (
+                                    <span className="text-xs text-cyan-400">{addPriceInfo}</span>
+                                )}
+                            </div>
+
                             <div className="grid grid-cols-2 gap-2">
                                 <label className="flex flex-col gap-1">
                                     <span className="text-xs text-slate-400">종목 코드 *</span>
@@ -518,26 +595,34 @@ export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigat
                                         type="text" placeholder="043200" required
                                         value={addForm.code}
                                         onChange={e => setAddForm(f => ({ ...f, code: e.target.value }))}
+                                        onBlur={e => fetchCodeInfo(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), fetchCodeInfo(addForm.code))}
                                         className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cyan-500"
                                     />
                                 </label>
                                 <label className="flex flex-col gap-1">
-                                    <span className="text-xs text-slate-400">종목명 (선택)</span>
+                                    <span className="text-xs text-slate-400">종목명</span>
                                     <input
-                                        type="text" placeholder="종목명"
+                                        type="text" placeholder="자동 입력"
                                         value={addForm.name}
                                         onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))}
-                                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cyan-500"
+                                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-cyan-500"
                                     />
                                 </label>
                                 <label className="flex flex-col gap-1">
-                                    <span className="text-xs text-slate-400">진입가 (원) *</span>
-                                    <input
-                                        type="number" placeholder="1000" required min={1}
-                                        value={addForm.entry_price}
-                                        onChange={e => setAddForm(f => ({ ...f, entry_price: e.target.value }))}
-                                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cyan-500"
-                                    />
+                                    <span className="text-xs text-slate-400">진입가 *</span>
+                                    <div className="relative">
+                                        <input
+                                            type="number" required min={1}
+                                            placeholder={addPriceFetching ? '조회 중...' : '0'}
+                                            value={addForm.entry_price}
+                                            onChange={e => setAddForm(f => ({ ...f, entry_price: e.target.value }))}
+                                            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cyan-500"
+                                        />
+                                        {addPriceFetching && (
+                                            <Loader2 size={12} className="animate-spin absolute right-2 top-2 text-slate-400" />
+                                        )}
+                                    </div>
                                 </label>
                                 <label className="flex flex-col gap-1">
                                     <span className="text-xs text-slate-400">수량 (0=자동)</span>

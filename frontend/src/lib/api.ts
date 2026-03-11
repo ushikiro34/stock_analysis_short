@@ -39,6 +39,38 @@ export interface StockScore {
     };
 }
 
+export interface StockAnalysis {
+    code: string;
+    name: string;
+    market: string;
+    current_price: number;
+    open: number;
+    high: number;
+    low: number;
+    change_pct: number;
+    volume: number;
+    vol_ma20: number;
+    vol_ratio: number;
+    ma5: number;
+    ma20: number;
+    ma60: number;
+    ma120: number;
+    vs_ma5_pct: number;
+    vs_ma20_pct: number;
+    vs_ma60_pct: number;
+    high52w: number;
+    low52w: number;
+    high20d: number;
+    is_52w_high: boolean;
+    is_20d_high: boolean;
+    signal: string;
+    score: number;
+    chase_blocked: boolean;
+    signal_reasons: string[];
+    updated_at: string;
+    error?: string;
+}
+
 export interface OHLCV {
     time: string;
     open: number;
@@ -270,6 +302,9 @@ export const fetchSurgeStocks = (market: Market): Promise<SurgeStock[]> =>
 
 export const fetchStockScore = (code: string, market: Market): Promise<StockScore> =>
     get(`/stocks/${code}/score?market=${market}`);
+
+export const fetchStockAnalyze = (code: string, market: Market): Promise<StockAnalysis> =>
+    get(`/stocks/${code}/analyze?market=${market}`);
 
 export const fetchDailyChart = (code: string, market: Market): Promise<OHLCV[]> =>
     get(`/stocks/${code}/daily?market=${market}`);

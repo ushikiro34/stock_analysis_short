@@ -13,6 +13,8 @@ import logging
 from ...core.score_service import calculate_score
 from ...kis.rest_client import get_kis_client
 from pykrx import stock as pykrx_stock
+from ...core.signal_service import collect_ohlcv_data
+from ...core.signals import SignalManager
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +69,118 @@ _penny_stocks_cache: dict = {"data": [], "ts": 0}
 _weekly_cache: dict = {}
 _minute_cache: dict = {}
 _daily_cache: dict = {}
+_analyze_cache: dict = {}
 
 
 # ── Endpoints ────────────────────────────────────────────────
+
+@router.get("/{code}/analyze")
+async def analyze_stock(code: str, market: str = "KR"):
+    """
+    종목 종합 분석 (관심주식 탭용)
+    현재가·등락률·거래량비율·이동평균 이격·52주/20일 신고가·진입신호 반환
+    """
+    now = time.time()
+    cache_key = f"{market}:{code}"
+    cached = _analyze_cache.get(cache_key)
+    if cached and now - cached["ts"] < 300:   # 5분 캐시
+        return cached["data"]
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        # ── OHLCV 로드 (300일) ──────────────────────────────────
+        if market == "KR":
+            end_dt = datetime.now()
+            start_dt = end_dt - timedelta(days=300)
+            raw = await loop.run_in_executor(
+                None,
+                lambda: pykrx_stock.get_market_ohlcv_by_date(
+                    start_dt.strftime("%Y%m%d"), end_dt.strftime("%Y%m%d"), code
+                ),
+            )
+            if raw.empty:
+                return {"error": "no_data"}
+            # 한글 컬럼 → 영문
+            ohlcv = raw.rename(columns={
+                "시가": "Open", "고가": "High", "저가": "Low",
+                "종가": "Close", "거래량": "Volume"
+            })[["Open", "High", "Low", "Close", "Volume"]]
+            # 종목명
+            name = pykrx_stock.get_market_ticker_name(code) or code
+        else:
+            ohlcv = await collect_ohlcv_data(code, market, 300)
+            if ohlcv.empty:
+                return {"error": "no_data"}
+            name = code
+
+        close  = ohlcv["Close"]
+        volume = ohlcv["Volume"]
+        last   = ohlcv.iloc[-1]
+        prev   = ohlcv.iloc[-2] if len(ohlcv) >= 2 else last
+
+        curr_price  = float(last["Close"])
+        prev_close  = float(prev["Close"])
+        change_pct  = (curr_price - prev_close) / prev_close * 100 if prev_close else 0.0
+
+        # 이동평균
+        ma5   = float(close.rolling(5).mean().iloc[-1])   if len(close) >= 5   else curr_price
+        ma20  = float(close.rolling(20).mean().iloc[-1])  if len(close) >= 20  else curr_price
+        ma60  = float(close.rolling(60).mean().iloc[-1])  if len(close) >= 60  else curr_price
+        ma120 = float(close.rolling(120).mean().iloc[-1]) if len(close) >= 120 else curr_price
+
+        # 거래량 비율
+        vol_ma20  = float(volume.rolling(20).mean().iloc[-1]) if len(volume) >= 20 else float(last["Volume"])
+        vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 1.0
+
+        # 52주 / 20일 신고가
+        high52w = float(close.tail(252).max())
+        low52w  = float(close.tail(252).min())
+        high20d = float(close.tail(20).max())
+        is_52w_high = curr_price >= high52w * 0.999
+        is_20d_high = curr_price >= high20d * 0.999
+
+        # 진입 신호
+        mgr = SignalManager()
+        sig = mgr.generate_entry_signal(ohlcv, strategy="combined")
+
+        result = {
+            "code": code,
+            "name": name,
+            "market": market,
+            "current_price": curr_price,
+            "open": float(last["Open"]),
+            "high": float(last["High"]),
+            "low": float(last["Low"]),
+            "change_pct": round(change_pct, 2),
+            "volume": int(last["Volume"]),
+            "vol_ma20": round(vol_ma20, 0),
+            "vol_ratio": round(vol_ratio, 2),
+            "ma5":   round(ma5, 2),
+            "ma20":  round(ma20, 2),
+            "ma60":  round(ma60, 2),
+            "ma120": round(ma120, 2),
+            "vs_ma5_pct":   round((curr_price / ma5  - 1) * 100, 1) if ma5  > 0 else 0,
+            "vs_ma20_pct":  round((curr_price / ma20 - 1) * 100, 1) if ma20 > 0 else 0,
+            "vs_ma60_pct":  round((curr_price / ma60 - 1) * 100, 1) if ma60 > 0 else 0,
+            "high52w": round(high52w, 2),
+            "low52w":  round(low52w, 2),
+            "high20d": round(high20d, 2),
+            "is_52w_high": is_52w_high,
+            "is_20d_high": is_20d_high,
+            "signal": sig.get("signal", "HOLD"),
+            "score":  sig.get("score", 0),
+            "chase_blocked": sig.get("details", {}).get("chase_blocked", False),
+            "signal_reasons": sig.get("reasons", []),
+            "updated_at": datetime.now().isoformat(),
+        }
+
+        _analyze_cache[cache_key] = {"data": result, "ts": now}
+        return result
+
+    except Exception as e:
+        logger.error(f"Analyze error for {code}: {e}")
+        return {"error": str(e)}
 @router.get("/{code}/score", response_model=Optional[ScoreResponse])
 async def get_stock_score(code: str, market: str = "KR"):
     """종목 점수 조회 (인메모리 캐시, 없으면 실시간 계산)"""

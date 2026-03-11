@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2, BookOpen } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2, BookOpen, Star } from 'lucide-react';
 import type { Market, LogEntry, MonitorStatus } from './lib/api';
 import { scanSignals, monitor } from './lib/api';
 
@@ -10,8 +10,9 @@ import BacktestDashboard from './pages/BacktestDashboard';
 import OptimizeDashboard from './pages/OptimizeDashboard';
 import PaperTradingDashboard from './pages/PaperTradingDashboard';
 import InvestmentJournalDashboard from './pages/InvestmentJournalDashboard';
+import WatchlistDashboard from './pages/WatchlistDashboard';
 
-type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper' | 'journal';
+type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper' | 'journal' | 'watchlist';
 
 export type PriceFilter = 'all' | 'penny' | 'range';
 
@@ -234,6 +235,7 @@ function App() {
         { id: 'optimize' as Tab, label: '최적화', icon: Settings, color: 'text-orange-400' },
         { id: 'paper' as Tab, label: '모의투자', icon: PlayCircle, color: 'text-cyan-400' },
         { id: 'journal' as Tab, label: '투자일지', icon: BookOpen, color: 'text-amber-400' },
+        { id: 'watchlist' as Tab, label: '관심종목', icon: Star, color: 'text-yellow-400' },
     ];
 
     return (
@@ -605,6 +607,9 @@ function App() {
                 </div>
                 <div className={`h-full ${activeTab === 'journal' ? '' : 'hidden'}`}>
                     <InvestmentJournalDashboard />
+                </div>
+                <div className={`h-full ${activeTab === 'watchlist' ? '' : 'hidden'}`}>
+                    <WatchlistDashboard market={market} />
                 </div>
             </main>
 

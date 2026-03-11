@@ -4,6 +4,7 @@ import logging
 import os
 import requests
 import websockets
+import websockets.exceptions
 from dotenv import load_dotenv
 from .aggregator import Aggregator
 
@@ -39,16 +40,27 @@ class KISWebSocketClient:
         # approval_key 자동 발급
         self.get_approval_key()
 
-        async with websockets.connect(WS_URL) as websocket:
+        async with websockets.connect(
+            WS_URL,
+            ping_interval=20,   # 20초마다 ping → 서버 응답 확인
+            ping_timeout=10,    # 10초 내 pong 없으면 연결 종료
+            close_timeout=5,    # close frame 대기 최대 5초
+        ) as websocket:
             self.ws = websocket
             logging.info("Connected to KIS WebSocket")
 
             # Subscribe to each code
             for code in self.codes:
                 await self.subscribe(code)
-            
-            async for message in websocket:
-                await self.handle_message(message)
+
+            try:
+                async for message in websocket:
+                    await self.handle_message(message)
+            except websockets.exceptions.ConnectionClosedOK:
+                logging.info("KIS WebSocket closed normally")
+            except websockets.exceptions.ConnectionClosedError as e:
+                logging.warning(f"KIS WebSocket connection dropped (code={e.code}): {e.reason or 'no close frame'}")
+                raise  # run_collector의 외부 루프에서 재접속 처리
 
     async def subscribe(self, code: str):
         # KIS Subscription format (Simplified for example)

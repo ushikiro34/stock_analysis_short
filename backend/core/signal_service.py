@@ -111,6 +111,8 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
         days = 350   # 주봉 RSI(14주) + MA200 + 버퍼
     elif strategy == "rsi_golden_cross":
         days = 250   # MA200 + 버퍼
+    elif strategy == "multi_tf_momentum_plus":
+        days = 150   # MA60 + MACD(26+9) + RSI 14 + 여유
     else:
         days = 120
 

@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func, or_, and_
 
 logger = logging.getLogger(__name__)
 
@@ -25,17 +25,17 @@ except ImportError:
 @dataclass
 class PaperConfig:
     initial_capital: float = 10_000_000.0  # 1000만원
-    position_size_pct: float = 0.3          # 종목당 30%
-    max_positions: int = 3
+    position_size_pct: float = 0.15         # 종목당 15%
+    max_positions: int = 2
     strategy: str = "combined"
     min_score: float = 65.0
     market: str = "KR"
     stop_loss_ratio: float = -0.02          # -2% 손절
-    trailing_stop_ratio: float = -0.05      # 최고가 대비 -5% (느슨하게: 1차 익절 후 급락 방어)
+    trailing_stop_ratio: float = -0.04      # 최고가 대비 -4% (G전략: 구 -5%보다 타이트)
     take_profit_targets: List[dict] = field(default_factory=lambda: [
-        {"ratio": 0.03, "volume_pct": 0.33, "name": "1차 익절 +3%"},   # 잔여의 1/3 — 빠른 확정
-        {"ratio": 0.07, "volume_pct": 0.50, "name": "2차 익절 +7%"},   # 잔여의 1/2
-        {"ratio": 0.15, "volume_pct": 1.00, "name": "3차 익절 +15%"},  # 전량
+        {"ratio": 0.02, "volume_pct": 0.33, "name": "1차 익절 +2%"},   # 잔여의 1/3 — 빠른 확정 & breakeven 전환
+        {"ratio": 0.05, "volume_pct": 0.50, "name": "2차 익절 +5%"},   # 잔여의 1/2
+        {"ratio": 0.10, "volume_pct": 1.00, "name": "3차 익절 +10%"},  # 전량
     ])
     stop_loss_targets: List[dict] = field(default_factory=lambda: [
         {"ratio": -0.01, "volume_pct": 0.33, "name": "1차 손절 -1%"},  # 잔여의 1/3
@@ -634,6 +634,104 @@ class PaperEngine:
             }
             for r in rows
         ]
+
+    async def get_journal(
+        self,
+        db: AsyncSession,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        code: Optional[str] = None,
+        profit_type: str = "all",  # all | profit | loss
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict:
+        """투자일지 조회 — 날짜·종목·수익여부 필터 지원"""
+        from ..db.models import PaperTrade
+
+        filters = [PaperTrade.status == "CLOSED"]
+
+        if date_from:
+            dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+            filters.append(PaperTrade.exit_time >= dt_from)
+        if date_to:
+            dt_to = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            filters.append(PaperTrade.exit_time <= dt_to)
+        if code:
+            kw = f"%{code}%"
+            filters.append(or_(PaperTrade.code.ilike(kw), PaperTrade.name.ilike(kw)))
+        if profit_type == "profit":
+            filters.append(PaperTrade.profit_loss > 0)
+        elif profit_type == "loss":
+            filters.append(PaperTrade.profit_loss <= 0)
+
+        where_clause = and_(*filters)
+
+        # 요약 집계
+        sum_q = await db.execute(
+            select(
+                func.count(PaperTrade.id).label("total"),
+                func.coalesce(func.sum(PaperTrade.profit_loss), 0).label("total_pnl"),
+            ).where(where_clause)
+        )
+        summary = sum_q.one()
+
+        profit_q = await db.execute(
+            select(
+                func.count(PaperTrade.id).label("cnt"),
+                func.coalesce(func.sum(PaperTrade.profit_loss), 0).label("amount"),
+            ).where(and_(where_clause, PaperTrade.profit_loss > 0))
+        )
+        profit_row = profit_q.one()
+        profit_cnt = profit_row.cnt or 0
+        profit_amount = float(profit_row.amount or 0)
+
+        loss_q = await db.execute(
+            select(
+                func.count(PaperTrade.id).label("cnt"),
+                func.coalesce(func.sum(PaperTrade.profit_loss), 0).label("amount"),
+            ).where(and_(where_clause, PaperTrade.profit_loss <= 0))
+        )
+        loss_row = loss_q.one()
+        loss_cnt = loss_row.cnt or 0
+        loss_amount = float(loss_row.amount or 0)
+
+        # 페이지네이션 거래 목록
+        rows_q = await db.execute(
+            select(PaperTrade)
+            .where(where_clause)
+            .order_by(PaperTrade.exit_time.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = rows_q.scalars().all()
+
+        trades = [
+            {
+                "id": r.id,
+                "code": r.code,
+                "name": r.name,
+                "market": r.market,
+                "entry_time": (r.entry_time.isoformat() + 'Z') if r.entry_time else None,
+                "entry_price": r.entry_price,
+                "exit_time": (r.exit_time.isoformat() + 'Z') if r.exit_time else None,
+                "exit_price": r.exit_price,
+                "exit_reason": r.exit_reason,
+                "quantity": r.quantity,
+                "profit_loss": r.profit_loss,
+                "profit_loss_pct": r.profit_loss_pct,
+            }
+            for r in rows
+        ]
+
+        return {
+            "trades": trades,
+            "total": summary.total or 0,
+            "total_pnl": float(summary.total_pnl or 0),
+            "profit_count": profit_cnt,
+            "profit_amount": profit_amount,
+            "loss_count": loss_cnt,
+            "loss_amount": loss_amount,
+        }
 
     async def get_history(self, db: AsyncSession, limit: int = 200) -> list:
         from ..db.models import PaperPortfolioHistory

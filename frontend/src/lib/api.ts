@@ -218,6 +218,23 @@ export interface PaperHistoryPoint {
     total_value: number;
 }
 
+export interface JournalResponse {
+    trades: PaperTrade[];
+    total: number;
+    total_pnl: number;
+    profit_count: number;
+    profit_amount: number;
+    loss_count: number;
+    loss_amount: number;
+}
+
+export interface JournalFilter {
+    date_from?: string;
+    date_to?: string;
+    code?: string;
+    profit_type: 'all' | 'profit' | 'loss';
+}
+
 // ── Helpers ───────────────────────────────────────────────────
 
 function extractDetail(text: string, fallback: string): string {
@@ -332,4 +349,14 @@ export const paperTrading = {
         post(`/paper/positions/${code}/close`, {}),
     addPosition: (data: { code: string; name?: string; entry_price: number; quantity?: number }): Promise<unknown> =>
         post('/paper/positions', data),
+    getJournal: (filter: JournalFilter, limit = 200, offset = 0): Promise<JournalResponse> => {
+        const p = new URLSearchParams();
+        if (filter.date_from) p.set('date_from', filter.date_from);
+        if (filter.date_to) p.set('date_to', filter.date_to);
+        if (filter.code) p.set('code', filter.code);
+        p.set('profit_type', filter.profit_type);
+        p.set('limit', String(limit));
+        p.set('offset', String(offset));
+        return get(`/paper/journal?${p.toString()}`);
+    },
 };

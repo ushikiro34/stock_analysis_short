@@ -68,16 +68,23 @@ _us_surge_cache: dict = {"data": [], "ts": 0}
 
 async def run_collector():
     """KIS WebSocket 수집을 백그라운드로 계속 실행 (자동 재접속)"""
+    import websockets.exceptions
     codes = ["005930", "000660"]
+    retry_delay = 5
     while True:
         try:
             agg = Aggregator()
             client = KISWebSocketClient(codes, agg)
             logger.info(f"Starting KIS collector for {codes}")
             await client.connect()
+            retry_delay = 5  # 정상 종료 후 재접속 대기 초기화
+        except websockets.exceptions.ConnectionClosedError as e:
+            logger.warning(f"Collector: WebSocket 연결 끊김 (code={e.code}) — {retry_delay}s 후 재접속")
+            await asyncio.sleep(retry_delay)
         except Exception as e:
-            logger.error(f"Collector error: {e}, reconnecting in 5s...")
-            await asyncio.sleep(5)
+            logger.error(f"Collector error: {type(e).__name__}: {e} — {retry_delay}s 후 재접속")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 60)  # 반복 실패 시 최대 60s까지 백오프
 
 
 async def run_scorer():

@@ -2,7 +2,9 @@
 Paper Trading API Router
 가상 자동매매 시뮬레이션 제어 및 조회
 """
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ...core.paper_engine import paper_engine
@@ -17,8 +19,8 @@ class StartConfig(BaseModel):
     market: str = "KR"
     strategy: str = "combined"
     min_score: float = 65.0
-    max_positions: int = 3
-    position_size_pct: float = 0.3
+    max_positions: int = 2
+    position_size_pct: float = 0.15
 
 
 class AddPositionRequest(BaseModel):
@@ -103,3 +105,19 @@ async def get_trades(limit: int = 50, db: AsyncSession = Depends(get_db)):
 async def get_history(limit: int = 200, db: AsyncSession = Depends(get_db)):
     """포트폴리오 가치 변화 이력"""
     return await paper_engine.get_history(db, limit)
+
+
+@router.get("/journal")
+async def get_journal(
+    date_from: Optional[str] = Query(None, description="시작 날짜 YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="종료 날짜 YYYY-MM-DD"),
+    code: Optional[str] = Query(None, description="종목코드/종목명 검색"),
+    profit_type: str = Query("all", description="all | profit | loss"),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """투자일지 조회 (날짜·종목·수익여부 필터)"""
+    return await paper_engine.get_journal(
+        db, date_from, date_to, code, profit_type, limit, offset
+    )

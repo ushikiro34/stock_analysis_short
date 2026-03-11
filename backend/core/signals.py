@@ -97,8 +97,37 @@ class VolumeBreakoutSignal:
             reasons.append("거래대금 2배 이상 증가")
             score += 20
 
+        # ── Case 2: 전고점 돌파 시 거래량 확인 (일봉 가짜 돌파 감지) ──────
+        # 최근 20일 고점 돌파 여부 판단, 돌파했다면 그날의 거래량과 비교
+        if len(ohlcv_data) >= 21:
+            recent_window = ohlcv_data.iloc[-21:-1]   # 당일 제외 20일
+            recent_high_val = float(recent_window["High"].max())
+            if current_price > recent_high_val:
+                high_day_idx = recent_window["High"].idxmax()
+                high_day_volume = float(recent_window.loc[high_day_idx, "Volume"])
+                vol_vs_high = current_volume / high_day_volume if high_day_volume > 0 else 1.0
+                if vol_vs_high < 0.8:
+                    # 거래량이 전고점 날보다 적음 → 가짜 돌파 의심
+                    reasons.append(
+                        f"[가짜돌파 의심] 20일 고점 돌파 但 거래량 {vol_vs_high:.2f}배 미달"
+                    )
+                    score = max(0, score - 25)
+                else:
+                    # 거래량 확인된 진짜 돌파
+                    reasons.append(f"전고점 돌파 + 거래량 확인 ({vol_vs_high:.2f}배)")
+                    score = min(100, score + 10)
+
+        # ── Case 1: 당일 급등 추격 방지 게이트 (≥5% 차단) ──────────────
+        price_change_pct = (current_price - prev_close) / prev_close * 100 if prev_close > 0 else 0.0
+        chase_blocked = price_change_pct >= 5.0
+
         # 신호 강도 결정
-        if score >= 70:
+        if chase_blocked:
+            # 이미 급등 완료된 종목 — 추격 진입 차단
+            reasons.append(f"[추격차단] 당일 +{price_change_pct:.1f}% 급등 (≥5%, 고점 진입 위험)")
+            strength = SignalStrength.LOW
+            signal = SignalType.HOLD
+        elif score >= 70:
             strength = SignalStrength.HIGH
             signal = SignalType.BUY
         elif score >= 50:
@@ -114,7 +143,8 @@ class VolumeBreakoutSignal:
             "score": score,
             "reasons": reasons,
             "volume_ratio": current_volume / prev_volume if prev_volume > 0 else 0,
-            "price_change": (current_price - prev_close) / prev_close if prev_close > 0 else 0
+            "price_change": price_change_pct / 100,
+            "chase_blocked": chase_blocked,
         }
 
 
@@ -585,9 +615,15 @@ class PricePatternSignal:
             return False
 
         # 돌파 조건: 당일 종가가 횡보 고가 돌파
-        breakout = current["Close"] > consolidation_high * 1.02
+        if current["Close"] <= consolidation_high * 1.02:
+            return False
 
-        return breakout
+        # Case 2: 횡보 돌파 거래량 확인 — 평균 거래량 미달 시 가짜 돌파
+        consolidation_avg_vol = consolidation["Volume"].mean()
+        if consolidation_avg_vol > 0 and current["Volume"] < consolidation_avg_vol:
+            return False  # 거래량 미확인 → 가짜 돌파 의심
+
+        return True
 
     def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
         """가격 패턴 신호 체크 (눌림목 포함)"""
@@ -957,6 +993,205 @@ class WeeklyRSISwingSignal:
 
 
 # ═══════════════════════════════════════════════════════════════
+# M+ 전략: 다중 타임프레임 모멘텀 (일봉 근사)
+# ═══════════════════════════════════════════════════════════════
+
+class MultiTFMomentumPlusSignal:
+    """
+    M+ 전략: 일봉 RSI 30 돌파 + MA20/60 골든크로스 + MACD 오실레이터 양전
+
+    다중 타임프레임 전략의 일봉 데이터 근사 구현:
+      1단계 (관심): 일봉 RSI 14가 30을 상향 돌파 → 과매도 탈출
+      2단계 (진입): MA20 > MA60 골든크로스 + MACD histogram > 0 → 상승 강도 확인
+      3단계 (추가): 전일 고가 갱신 → 15분봉 전고점 돌파 근사
+
+    M (rsi_golden_cross) 대비 핵심 차이:
+      - MA 기준: MA50/200 → MA20/60 (더 빠른 단기 신호)
+      - 필수 조건 추가: MACD histogram > 0 (상승 강도 필터)
+      - MACD histogram <= 0이면 무조건 HOLD
+
+    점수 구조:
+      MACD 양전 전환: +35 / 유지: +20  (필수, 없으면 HOLD)
+      MA20/60 GC 발생 (20일 이내): +30 / 유지: +20  (필수, 없으면 HOLD)
+      RSI 30 돌파 (5일 이내): +30 / 탈출 구간: +15 / 정상: +5  (30 이하면 HOLD)
+      거래량 급증(2배 이상): +15 / 증가(1.2배): +8
+      전일 고가 갱신: +10
+      BUY 기준: 70점 이상
+    """
+
+    MIN_BARS = 120  # MA60 + RSI 14 + MACD(26+9) + 여유
+
+    def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
+        if len(ohlcv_data) < self.MIN_BARS:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": [f"데이터 부족 (최소 {self.MIN_BARS}일, 현재 {len(ohlcv_data)}일)"],
+            }
+
+        closes = ohlcv_data["Close"]
+        highs = ohlcv_data["High"]
+        volumes = ohlcv_data["Volume"]
+        score = 0
+        reasons = []
+
+        # ── 1. MACD 오실레이터 > 0 (M+ 핵심 필수 조건) ──────────────
+        macd_data = IndicatorEngine.calculate_macd(closes)
+        histogram = macd_data.get("histogram", pd.Series(dtype=float))
+
+        if len(histogram) < 2:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": ["MACD 계산 실패"],
+            }
+
+        curr_hist = float(histogram.iloc[-1])
+        prev_hist = float(histogram.iloc[-2])
+
+        if curr_hist <= 0:
+            # MACD 오실레이터 음수 → M+ 핵심 조건 미충족
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": [f"MACD 오실레이터 음수 ({curr_hist:.4f}) — M+ 조건 미충족"],
+                "macd_histogram": curr_hist,
+            }
+
+        if prev_hist <= 0 < curr_hist:
+            reasons.append(f"MACD 오실레이터 양전 전환 ({curr_hist:.4f})")
+            score += 35
+        else:
+            reasons.append(f"MACD 오실레이터 양수 유지 ({curr_hist:.4f})")
+            score += 20
+
+        # ── 2. MA20 > MA60 골든크로스 (필수 조건) ───────────────────
+        ma20 = IndicatorEngine.calculate_ma(closes, 20)
+        ma60 = IndicatorEngine.calculate_ma(closes, 60)
+
+        if len(ma20) == 0 or len(ma60) == 0:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": score,
+                "reasons": reasons + ["MA 계산 실패"],
+                "macd_histogram": curr_hist,
+            }
+
+        curr_ma20 = float(ma20.iloc[-1])
+        curr_ma60 = float(ma60.iloc[-1])
+
+        if curr_ma20 <= curr_ma60:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": score,
+                "reasons": reasons + [f"MA20 < MA60 — 골든크로스 미형성"],
+                "macd_histogram": curr_hist,
+                "ma20": curr_ma20,
+                "ma60": curr_ma60,
+            }
+
+        gc_pct = (curr_ma20 - curr_ma60) / curr_ma60 * 100
+        recent_gc = False
+        for i in range(1, min(21, len(ma20))):
+            if float(ma20.iloc[-i]) > float(ma60.iloc[-i]) and float(ma20.iloc[-i - 1]) <= float(ma60.iloc[-i - 1]):
+                reasons.append(f"MA20/60 골든크로스 ({i}일 전, 격차 +{gc_pct:.2f}%)")
+                score += 30
+                recent_gc = True
+                break
+        if not recent_gc:
+            reasons.append(f"MA20 > MA60 유지 (+{gc_pct:.2f}%)")
+            score += 20
+
+        # ── 3. RSI 30 상향 돌파 확인 ─────────────────────────────────
+        rsi = IndicatorEngine.calculate_rsi(closes, 14)
+
+        if len(rsi) < 6:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": score,
+                "reasons": reasons + ["RSI 데이터 부족"],
+                "macd_histogram": curr_hist,
+            }
+
+        curr_rsi = float(rsi.iloc[-1])
+
+        # RSI 30 이하 → 아직 과매도, HOLD
+        if curr_rsi <= 30:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": score,
+                "reasons": reasons + [f"RSI 과매도 미탈출 ({curr_rsi:.1f})"],
+                "macd_histogram": curr_hist,
+                "rsi": curr_rsi,
+            }
+
+        # 최근 5일 이내 RSI 30 상향 돌파
+        rsi_crossed = False
+        for i in range(1, min(6, len(rsi))):
+            if len(rsi) > i + 1 and float(rsi.iloc[-i - 1]) <= 30 < float(rsi.iloc[-i]):
+                reasons.append(f"RSI 30 상향 돌파 ({i}일 전, 현재 {curr_rsi:.1f})")
+                score += 30
+                rsi_crossed = True
+                break
+
+        if not rsi_crossed:
+            if 30 < curr_rsi < 50:
+                reasons.append(f"RSI 과매도 탈출 구간 ({curr_rsi:.1f})")
+                score += 15
+            else:
+                reasons.append(f"RSI 정상 범위 ({curr_rsi:.1f})")
+                score += 5
+
+        # ── 4. 거래량 확인 (보조) ────────────────────────────────────
+        vol_ma20 = float(volumes.tail(20).mean())
+        vol_ratio = float(volumes.iloc[-1]) / vol_ma20 if vol_ma20 > 0 else 0
+
+        if vol_ratio >= 2.0:
+            reasons.append(f"거래량 급증 ({vol_ratio:.1f}배)")
+            score += 15
+        elif vol_ratio >= 1.2:
+            reasons.append(f"거래량 증가 ({vol_ratio:.1f}배)")
+            score += 8
+        else:
+            reasons.append(f"거래량 보통 ({vol_ratio:.1f}배)")
+
+        # ── 5. 전일 고가 갱신 (15분봉 전고점 돌파 근사) ──────────────
+        curr_high = float(highs.iloc[-1])
+        prev_high = float(highs.iloc[-2])
+        if curr_high > prev_high:
+            reasons.append(f"전일 고가 갱신 ({curr_high:,.0f} > {prev_high:,.0f})")
+            score += 10
+
+        # ── 신호 결정 ────────────────────────────────────────────────
+        # M+ 전략: 고확신 신호(75점+)만 BUY → 과다 진입 방지
+        if score >= 75:
+            strength, signal_type = SignalStrength.HIGH, SignalType.BUY
+        elif score >= 55:
+            strength, signal_type = SignalStrength.MEDIUM, SignalType.HOLD  # 참고용만, 진입 안 함
+        else:
+            strength, signal_type = SignalStrength.LOW, SignalType.HOLD
+
+        return {
+            "signal": signal_type,
+            "strength": strength,
+            "score": score,
+            "reasons": reasons,
+            "macd_histogram": curr_hist,
+            "rsi": curr_rsi,
+            "ma20": curr_ma20,
+            "ma60": curr_ma60,
+            "volume_ratio": vol_ratio,
+        }
+
+
+# ═══════════════════════════════════════════════════════════════
 # 통합 신호 매니저
 # ═══════════════════════════════════════════════════════════════
 
@@ -969,6 +1204,7 @@ class SignalManager:
         self.pattern_signal = PricePatternSignal()
         self.rsi_golden_cross_signal = RSIGoldenCrossSignal()
         self.weekly_rsi_swing_signal = WeeklyRSISwingSignal()
+        self.multi_tf_momentum_plus_signal = MultiTFMomentumPlusSignal()
 
     def generate_entry_signal(self, ohlcv_data: pd.DataFrame, strategy: str = "combined") -> Dict:
         """
@@ -976,7 +1212,8 @@ class SignalManager:
 
         Args:
             ohlcv_data: OHLCV 데이터
-            strategy: "volume" | "technical" | "pattern" | "rsi_golden_cross" | "combined"
+            strategy: "volume" | "technical" | "pattern" | "rsi_golden_cross" |
+                      "weekly_rsi_swing" | "multi_tf_momentum_plus" | "combined"
 
         Returns:
             종합 신호 정보
@@ -991,10 +1228,29 @@ class SignalManager:
             return self.rsi_golden_cross_signal.check_signal(ohlcv_data)
         elif strategy == "weekly_rsi_swing":
             return self.weekly_rsi_swing_signal.check_signal(ohlcv_data)
+        elif strategy == "multi_tf_momentum_plus":
+            return self.multi_tf_momentum_plus_signal.check_signal(ohlcv_data)
         else:  # combined
             volume_result = self.volume_signal.check_signal(ohlcv_data)
             technical_result = self.technical_signal.check_signal(ohlcv_data)
             pattern_result = self.pattern_signal.check_signal(ohlcv_data)
+
+            # Case 1 전파: 거래량 신호에서 추격차단이 발동되면 combined도 즉시 HOLD
+            if volume_result.get("chase_blocked", False):
+                chase_reason = next(
+                    (r for r in volume_result["reasons"] if "추격차단" in r), ""
+                )
+                return {
+                    "signal": SignalType.HOLD,
+                    "strength": SignalStrength.LOW,
+                    "score": 0,
+                    "reasons": [chase_reason] + volume_result["reasons"],
+                    "breakdown": {
+                        "volume": volume_result,
+                        "technical": technical_result,
+                        "pattern": pattern_result,
+                    },
+                }
 
             # 종합 점수 (가중 평균)
             total_score = (

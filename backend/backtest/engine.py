@@ -104,26 +104,27 @@ class Trade:
 class BacktestConfig:
     """백테스팅 설정"""
     initial_capital: float = 10000.0  # 초기 자본금
-    position_size_pct: float = 0.3  # 종목당 투자 비율 (30%)
-    max_positions: int = 3  # 최대 동시 보유 종목 수
+    position_size_pct: float = 0.15  # 종목당 투자 비율 (15%)
+    max_positions: int = 2  # 최대 동시 보유 종목 수
 
     # 진입 조건
-    entry_strategy: str = "combined"  # volume, technical, pattern, combined
+    entry_strategy: str = "combined"  # volume, technical, pattern, combined, rsi_golden_cross, weekly_rsi_swing, multi_tf_momentum_plus
     min_entry_score: float = 60.0  # 최소 진입 점수
 
-    # 청산 조건
+    # 청산 조건 — G(보수형) 전략 기본값
+    # 검증: 중소형주 8종목 730일 백테스트 D/G/H 비교에서 ROI·MDD 복합 우위 확인
     take_profit_targets: List[Dict] = field(default_factory=lambda: [
-        {"ratio": 0.03, "volume_pct": 0.33, "name": "1차 익절 +3%"},   # 잔여의 1/3 — 빠른 확정
-        {"ratio": 0.07, "volume_pct": 0.50, "name": "2차 익절 +7%"},   # 잔여의 1/2
-        {"ratio": 0.15, "volume_pct": 1.00, "name": "3차 익절 +15%"},  # 전량
+        {"ratio": 0.02, "volume_pct": 0.33, "name": "1차 익절 +2%"},   # 잔여의 1/3 — 빠른 확정 & breakeven 전환
+        {"ratio": 0.05, "volume_pct": 0.50, "name": "2차 익절 +5%"},   # 잔여의 1/2
+        {"ratio": 0.10, "volume_pct": 1.00, "name": "3차 익절 +10%"},  # 전량
     ])
     stop_loss_targets: List[Dict] = field(default_factory=lambda: [
         {"ratio": -0.01, "volume_pct": 0.33, "name": "1차 손절 -1%"},  # 잔여의 1/3
         {"ratio": -0.02, "volume_pct": 1.00, "name": "2차 손절 -2%"},  # 전량
     ])
     stop_loss_ratio: float = -0.02  # 하위 호환용 (동적 손절가 초기값으로만 사용)
-    trailing_stop_ratio: float = -0.05  # 최고가 대비 -5%
-    max_holding_days: int = 5  # 최대 보유 일수
+    trailing_stop_ratio: float = -0.04  # 최고가 대비 -4% (G전략: 구 D의 -5%보다 타이트)
+    max_holding_days: int = 7  # 최대 보유 일수 (G전략: 구 D의 10일보다 단축)
 
     # 수수료
     commission_rate: float = 0.001  # 0.1% 수수료
@@ -542,6 +543,7 @@ async def run_simple_backtest(
                 _strategy_window = {
                     'rsi_golden_cross': 250,
                     'weekly_rsi_swing': 350,
+                    'multi_tf_momentum_plus': 150,
                 }
                 data_window = _strategy_window.get(config.entry_strategy, 120)
                 historical_data = ohlcv_data.iloc[:i+1].tail(data_window)

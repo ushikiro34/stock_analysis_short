@@ -1,10 +1,11 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
     Search, ChevronLeft, ChevronRight, RefreshCw, RotateCcw,
-    TrendingUp, TrendingDown, BookOpen, BarChart2,
+    TrendingUp, TrendingDown, BookOpen, BarChart2, X, Loader2, Sparkles,
 } from 'lucide-react';
 import type { PaperTrade, JournalFilter } from '../lib/api';
 import { paperTrading } from '../lib/api';
+const API_BASE = 'http://localhost:8000';
 
 // ── 유틸 ────────────────────────────────────────────────────────
 
@@ -54,6 +55,187 @@ function fmtReason(r: string | null): string {
     return map[r] ?? r;
 }
 
+// ── AI 분석 모달 ─────────────────────────────────────────────────
+
+const SECTION_ICONS: Record<string, string> = {
+    '1': '🏭', '2': '📰', '3': '🕯️', '4': '📉',
+    '5': '📊', '6': '🔮', '7': '💡',
+};
+
+function parseAnalysisSections(text: string): { title: string; body: string }[] {
+    const parts = text.split(/(?=### \d+\.)/).filter(Boolean);
+    return parts.map(part => {
+        const lines = part.trim().split('\n');
+        const title = lines[0].replace(/^### /, '').trim();
+        const body = lines.slice(1).join('\n').trim();
+        return { title, body };
+    });
+}
+
+function AnalysisModal({ trade, onClose }: { trade: PaperTrade; onClose: () => void }) {
+    const [text, setText] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const abortRef = useRef<AbortController | null>(null);
+
+    const isProfit = trade.profit_loss >= 0;
+    const pnlColor = isProfit ? 'text-green-400' : 'text-red-400';
+
+    // 마운트 즉시 스트리밍 시작
+    useEffect(() => {
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+
+        (async () => {
+            try {
+                const res = await fetch(`${API_BASE}/paper/journal/${trade.id}/analyze`, {
+                    signal: ctrl.signal,
+                });
+                if (!res.ok) {
+                    const j = await res.json().catch(() => ({}));
+                    setError(j.detail || `오류 ${res.status}`);
+                    return;
+                }
+                const reader = res.body!.getReader();
+                const dec = new TextDecoder();
+                let buf = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += dec.decode(value, { stream: true });
+                    const lines = buf.split('\n');
+                    buf = lines.pop() ?? '';
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const payload = line.slice(6).trim();
+                        if (payload === '[DONE]') continue;
+                        try {
+                            const { text: t, error: e } = JSON.parse(payload);
+                            if (e) { setError(e); return; }
+                            if (t) setText(prev => prev + t);
+                        } catch { /* ignore parse errors */ }
+                    }
+                }
+            } catch (e: any) {
+                if (e?.name !== 'AbortError') setError(String(e));
+            } finally {
+                setLoading(false);
+            }
+        })();
+
+        return () => ctrl.abort();
+    }, [trade.id]);
+
+    const sections = parseAnalysisSections(text);
+    const showRaw = sections.length === 0 && text;
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            onClick={onClose}
+        >
+            <div
+                className="relative flex flex-col bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
+                style={{ width: '92vw', maxWidth: '1200px', height: '90vh' }}
+                onClick={e => e.stopPropagation()}
+            >
+                {/* 헤더 */}
+                <div className="shrink-0 flex items-start justify-between px-6 py-4 bg-slate-800/80 border-b border-slate-700">
+                    <div className="flex items-center gap-4">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <Sparkles size={18} className="text-amber-400" />
+                                <span className="font-bold text-lg text-slate-100">AI 거래 분석</span>
+                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                                    trade.market === 'KR' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'
+                                }`}>{trade.market}</span>
+                            </div>
+                            <div className="text-sm text-slate-400 mt-0.5">
+                                {trade.name} <span className="text-slate-600 font-mono">({trade.code})</span>
+                            </div>
+                        </div>
+                    </div>
+                    {/* 거래 요약 배지 */}
+                    <div className="flex items-center gap-6 mr-10">
+                        <div className="text-center">
+                            <div className="text-[10px] text-slate-500 mb-0.5">매수가</div>
+                            <div className="text-sm font-mono text-slate-200">{trade.entry_price.toLocaleString()}원</div>
+                        </div>
+                        <div className="text-slate-700 text-lg">→</div>
+                        <div className="text-center">
+                            <div className="text-[10px] text-slate-500 mb-0.5">매도가</div>
+                            <div className="text-sm font-mono text-slate-200">{trade.exit_price?.toLocaleString() ?? '-'}원</div>
+                        </div>
+                        <div className={`text-center px-3 py-1.5 rounded-lg ${isProfit ? 'bg-green-500/15 border border-green-500/30' : 'bg-red-500/15 border border-red-500/30'}`}>
+                            <div className="text-[10px] text-slate-500 mb-0.5">손익</div>
+                            <div className={`text-sm font-bold font-mono ${pnlColor}`}>
+                                {isProfit ? '+' : ''}{trade.profit_loss.toLocaleString()}원
+                            </div>
+                            <div className={`text-xs ${pnlColor}`}>
+                                {isProfit ? '+' : ''}{trade.profit_loss_pct.toFixed(2)}%
+                            </div>
+                        </div>
+                        <div className="text-center">
+                            <div className="text-[10px] text-slate-500 mb-0.5">청산</div>
+                            <div className="text-sm text-slate-300">{fmtReason(trade.exit_reason)}</div>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition-colors">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                {/* 본문 */}
+                <div className="flex-1 overflow-y-auto px-6 py-5">
+                    {error ? (
+                        <div className="flex items-center justify-center h-full">
+                            <div className="text-red-400 text-sm bg-red-500/10 border border-red-500/30 rounded-xl px-6 py-4">
+                                {error}
+                            </div>
+                        </div>
+                    ) : sections.length > 0 ? (
+                        <div className="grid grid-cols-2 gap-4">
+                            {sections.map(({ title, body }, i) => {
+                                const numMatch = title.match(/^(\d+)/);
+                                const num = numMatch?.[1] ?? '';
+                                const icon = SECTION_ICONS[num] ?? '📌';
+                                const isLastOdd = sections.length % 2 === 1 && i === sections.length - 1;
+                                return (
+                                    <div
+                                        key={i}
+                                        className={`bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 ${isLastOdd ? 'col-span-2' : ''}`}
+                                    >
+                                        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-700/50">
+                                            <span className="text-base">{icon}</span>
+                                            <h3 className="text-sm font-bold text-slate-200">{title.replace(/^\d+\.\s*/, '').trim() || title}</h3>
+                                        </div>
+                                        <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{body}</p>
+                                    </div>
+                                );
+                            })}
+                            {/* 스트리밍 중 마지막 섹션 뒤에 커서 표시 */}
+                            {loading && (
+                                <div className="col-span-2 flex items-center gap-2 text-slate-500 text-sm py-2">
+                                    <Loader2 size={14} className="animate-spin text-amber-400" />
+                                    <span className="text-amber-400/70">분석 중...</span>
+                                </div>
+                            )}
+                        </div>
+                    ) : showRaw ? (
+                        <pre className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{text}</pre>
+                    ) : loading ? (
+                        <div className="flex flex-col items-center justify-center h-full gap-4">
+                            <Loader2 size={32} className="animate-spin text-amber-400" />
+                            <div className="text-slate-400 text-sm">AI가 거래를 분석하는 중...</div>
+                            <div className="text-slate-600 text-xs">Groq · Llama-3.3-70b powered</div>
+                        </div>
+                    ) : null}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // ── 컴포넌트 ────────────────────────────────────────────────────
 
 type SortKey = 'exit_time' | 'entry_time' | 'profit_loss' | 'profit_loss_pct';
@@ -82,6 +264,7 @@ export default function InvestmentJournalDashboard() {
     const [sortKey, setSortKey] = useState<SortKey>('exit_time');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
 
+    const [analyzingTrade, setAnalyzingTrade] = useState<PaperTrade | null>(null);
     const codeRef = useRef<HTMLInputElement>(null);
 
     const fetchJournal = useCallback(async (filter: JournalFilter) => {
@@ -169,6 +352,10 @@ export default function InvestmentJournalDashboard() {
     const winRate = total > 0 ? ((profitCount / total) * 100).toFixed(1) : '0.0';
 
     return (
+        <>
+        {analyzingTrade && (
+            <AnalysisModal trade={analyzingTrade} onClose={() => setAnalyzingTrade(null)} />
+        )}
         <div className="h-full flex flex-col gap-4 overflow-hidden">
 
             {/* ── 필터 바 ─────────────────────────────────────────── */}
@@ -406,8 +593,17 @@ export default function InvestmentJournalDashboard() {
                                             className={`border-b border-slate-700/40 divide-x divide-slate-700/30 transition-colors ${zebraBg} ${hoverBg}`}
                                         >
                                             <td className="px-3 py-2 text-right text-slate-500 font-mono text-xs">{idx + 1}</td>
-                                            <td className="px-3 py-2 text-left">
-                                                <div className="font-semibold text-slate-100">{t.name || t.code}</div>
+                                            <td
+                                                className="px-3 py-2 text-left cursor-pointer group/name"
+                                                onClick={() => setAnalyzingTrade(t)}
+                                                title="AI 분석 보기"
+                                            >
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="font-semibold text-slate-100 group-hover/name:text-amber-300 transition-colors">
+                                                        {t.name || t.code}
+                                                    </span>
+                                                    <Sparkles size={11} className="text-slate-600 group-hover/name:text-amber-400 transition-colors shrink-0" />
+                                                </div>
                                                 <div className="text-xs text-slate-500 font-mono">{t.code}</div>
                                             </td>
                                             <td className="px-3 py-2 text-center">
@@ -461,6 +657,7 @@ export default function InvestmentJournalDashboard() {
                 )}
             </div>
         </div>
+        </>
     );
 }
 

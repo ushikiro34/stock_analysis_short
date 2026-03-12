@@ -11,3 +11,7 @@ requests
 httpx
 pykrx
 yfinance
+anthropic
+groq
+google-generativeai
+beautifulsoup4

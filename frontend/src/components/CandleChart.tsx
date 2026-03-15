@@ -6,12 +6,16 @@ interface CandleChartProps {
 }
 
 const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
-    const chartContainerRef = useRef<HTMLDivElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const seriesRef = useRef<any>(null);
+    const chartRef = useRef<any>(null);
+    const firstDataRef = useRef(true);
 
+    // 차트 생성 — 마운트 시 1회 (종목/모드 변경은 key prop으로 처리)
     useEffect(() => {
-        if (!chartContainerRef.current) return;
+        if (!containerRef.current) return;
 
-        const chart = createChart(chartContainerRef.current, {
+        const chart = createChart(containerRef.current, {
             layout: {
                 background: { type: ColorType.Solid, color: '#1e293b' },
                 textColor: '#d1d5db',
@@ -20,11 +24,15 @@ const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
                 vertLines: { color: '#334155' },
                 horzLines: { color: '#334155' },
             },
-            width: chartContainerRef.current.clientWidth,
-            height: 500,
+            width: containerRef.current.clientWidth,
+            height: containerRef.current.clientHeight || 500,
+            timeScale: {
+                rightOffset: 5,
+                barSpacing: 8,
+            },
         });
 
-        const candlestickSeries = chart.addCandlestickSeries({
+        const series = chart.addCandlestickSeries({
             upColor: '#22c55e',
             downColor: '#ef4444',
             borderVisible: false,
@@ -32,21 +40,49 @@ const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
             wickDownColor: '#ef4444',
         });
 
-        candlestickSeries.setData(data);
+        chartRef.current = chart;
+        seriesRef.current = series;
+        firstDataRef.current = true;
 
         const handleResize = () => {
-            chart.applyOptions({ width: chartContainerRef.current?.clientWidth });
+            if (containerRef.current) {
+                chart.applyOptions({
+                    width: containerRef.current.clientWidth,
+                    height: containerRef.current.clientHeight || 500,
+                });
+            }
         };
 
-        window.addEventListener('resize', handleResize);
+        const ro = new ResizeObserver(handleResize);
+        ro.observe(containerRef.current);
 
         return () => {
-            window.removeEventListener('resize', handleResize);
+            ro.disconnect();
             chart.remove();
+            chartRef.current = null;
+            seriesRef.current = null;
         };
+    }, []);
+
+    // 데이터 갱신 — 차트 재생성 없이 series만 업데이트
+    useEffect(() => {
+        if (!seriesRef.current || data.length === 0) return;
+
+        seriesRef.current.setData(data);
+
+        // 최초 데이터 로드 시에만 전체 맞춤 (이후 폴링 갱신은 뷰포트 유지)
+        if (firstDataRef.current && chartRef.current) {
+            chartRef.current.timeScale().fitContent();
+            firstDataRef.current = false;
+        }
     }, [data]);
 
-    return <div ref={chartContainerRef} className="w-full rounded-lg overflow-hidden border border-slate-700" />;
+    return (
+        <div
+            ref={containerRef}
+            className="w-full h-full rounded-lg overflow-hidden border border-slate-700"
+        />
+    );
 };
 
 export default CandleChart;

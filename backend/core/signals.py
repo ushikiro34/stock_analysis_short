@@ -625,6 +625,187 @@ class PricePatternSignal:
 
         return True
 
+    def detect_cup_and_handle(self, ohlcv_data: pd.DataFrame) -> Dict:
+        """컵앤핸들(Cup & Handle) 패턴 감지
+
+        구조:
+            좌측 림 → U자 바닥 → 우측 림 (컵, 15~70일)
+                    → 소폭 눌림 (핸들, 5~15일) → 우측 림 돌파 (진입 신호)
+
+        조건:
+            1. 컵 깊이: 15~50% (너무 얕거나 깊은 것 제외)
+            2. 우측 림: 좌측 림의 90~115% 수준 회복
+            3. 핸들 조정: 컵 깊이의 50% 이내 (소폭 눌림)
+            4. 핸들 거래량: 컵 구간 대비 감소 (조용한 조정)
+            5. 돌파: 현재가 ≥ 우측 림 × 0.99 + 거래량 급증
+
+        점수 구조:
+            컵 형성:           +25
+            핸들 형성:         +20
+            핸들 거래량 감소:   +15
+            U자 바닥 형태:     +10
+            우측 림 돌파:      +25
+            돌파 거래량 확인:   +20
+            is_cup_handle: True → score >= 60
+
+        Returns:
+            {"is_cup_handle": bool, "score": int, "reasons": list, ...}
+        """
+        if len(ohlcv_data) < 60:
+            return {"is_cup_handle": False, "score": 0, "reasons": ["데이터 부족 (최소 60일)"]}
+
+        closes = ohlcv_data["Close"].values
+        volumes = ohlcv_data["Volume"].values
+        n = len(closes)
+
+        # 최근 90일로 제한 (오래된 패턴은 신뢰도 낮음)
+        start = max(0, n - 90)
+        c = closes[start:]
+        v = volumes[start:]
+        total = len(c)
+
+        best: Optional[Dict] = None
+
+        for handle_days in range(5, 16):
+            cup_end = total - handle_days
+            if cup_end < 15:
+                continue
+
+            cup = c[:cup_end]
+            handle = c[cup_end:]
+            handle_vol = v[cup_end:]
+            cup_n = len(cup)
+
+            # ── 좌측 림: 전반부 1/3의 최고점 ──────────────────────────
+            left_n = max(1, cup_n // 3)
+            left_rim = float(cup[:left_n].max())
+            left_rim_pos = int(cup[:left_n].argmax())
+
+            # ── 바닥: 좌측 림 이후 최저점 ──────────────────────────────
+            after_left = cup[left_rim_pos:]
+            if len(after_left) < 5:
+                continue
+            bottom = float(after_left.min())
+            bottom_rel = int(after_left.argmin())
+            bottom_pos = left_rim_pos + bottom_rel
+
+            # ── 우측 림: 바닥 이후 최고점 ──────────────────────────────
+            after_bottom = cup[bottom_pos:]
+            if len(after_bottom) < 3:
+                continue
+            right_rim = float(after_bottom.max())
+
+            # ── 컵 깊이 검증 (15~50%) ──────────────────────────────────
+            cup_depth = (left_rim - bottom) / left_rim if left_rim > 0 else 0
+            if not (0.15 <= cup_depth <= 0.50):
+                continue
+
+            # ── 우측 림 높이 검증 (좌측 림의 90~115%) ──────────────────
+            rim_ratio = right_rim / left_rim if left_rim > 0 else 0
+            if not (0.90 <= rim_ratio <= 1.15):
+                continue
+
+            # ── 핸들 조정폭 검증 (컵 깊이의 50% 이내) ──────────────────
+            if len(handle) < 3:
+                continue
+            handle_low = float(handle.min())
+            handle_retrace = (right_rim - handle_low) / (right_rim - bottom) if (right_rim - bottom) > 0 else 1.0
+            if handle_retrace > 0.50:
+                continue
+
+            # ── 점수 계산 ───────────────────────────────────────────────
+            this_score = 0
+            this_reasons = []
+
+            # 1. 컵 형성 (+25)
+            this_score += 25
+            this_reasons.append(f"컵 형성 (깊이 {cup_depth*100:.1f}%, 우측 림 {rim_ratio*100:.1f}%)")
+
+            # 2. 핸들 형성 (+20)
+            this_score += 20
+            this_reasons.append(f"핸들 형성 ({handle_days}일, 조정 {handle_retrace*100:.1f}%)")
+
+            # 3. 핸들 거래량 감소 (+15)
+            cup_avg_vol = float(v[left_rim_pos:cup_end].mean()) if cup_end > left_rim_pos else 1.0
+            handle_avg_vol = float(handle_vol.mean()) if len(handle_vol) > 0 else 0.0
+            if handle_avg_vol < cup_avg_vol:
+                this_score += 15
+                this_reasons.append("핸들 거래량 감소 (조용한 눌림)")
+
+            # 4. U자 바닥 형태 (+10): 바닥 전후 5봉 변동폭 < 5%
+            b0 = max(0, bottom_pos - 5)
+            b1 = min(cup_n, bottom_pos + 6)
+            bottom_region = cup[b0:b1]
+            if len(bottom_region) >= 3:
+                br = (float(bottom_region.max()) - float(bottom_region.min())) / left_rim
+                if br < 0.05:
+                    this_score += 10
+                    this_reasons.append("U자 바닥 형태 확인")
+
+            # 5. 돌파 상태 판단 (신선도 포함)
+            current_price = float(closes[-1])
+            current_vol = float(volumes[-1])
+            vol_ma20 = float(volumes[-20:].mean()) if n >= 20 else float(volumes.mean())
+            vol_ratio = current_vol / vol_ma20 if vol_ma20 > 0 else 0
+
+            if current_price > right_rim * 1.15:
+                # 우측 림 대비 15% 초과 상승 → 돌파 완료 후 한참 지남
+                breakout_status = "expired"
+                expired_pct = (current_price / right_rim - 1) * 100
+                this_reasons.append(f"⚠️ 진입 기회 소멸 (우측 림 {right_rim:,.0f}원 대비 현재 +{expired_pct:.0f}%)")
+            elif current_price >= right_rim * 0.99:
+                # 신선한 돌파 (우측 림 ~ +15%)
+                breakout_status = "fresh"
+                this_score += 25
+                this_reasons.append(f"우측 림 돌파 ({right_rim:,.0f}원)")
+                if vol_ratio >= 1.5:
+                    this_score += 20
+                    this_reasons.append(f"돌파 거래량 확인 ({vol_ratio:.1f}배)")
+            elif current_price >= right_rim * 0.95:
+                # 돌파 임박 (우측 림 -5% 이내 접근)
+                breakout_status = "pre"
+                approach_pct = (current_price / right_rim - 1) * 100
+                this_score += 15
+                this_reasons.append(f"우측 림 접근 중 ({right_rim:,.0f}원, {approach_pct:.1f}%)")
+            else:
+                # 패턴 형성 중 (아직 림까지 거리 있음)
+                breakout_status = "forming"
+
+            if best is None or this_score > best["score"]:
+                best = {
+                    "score": this_score,
+                    "reasons": this_reasons,
+                    "handle_days": handle_days,
+                    "left_rim": left_rim,
+                    "right_rim": right_rim,
+                    "bottom": bottom,
+                    "cup_depth": cup_depth,
+                    "breakout_status": breakout_status,
+                    "vol_ratio": vol_ratio,
+                }
+
+        if best is None or best["score"] < 40:
+            return {
+                "is_cup_handle": False,
+                "score": best["score"] if best else 0,
+                "reasons": ["컵앤핸들 패턴 미감지"],
+            }
+
+        breakout_status = best["breakout_status"]
+        # fresh(신선 돌파) 또는 pre(임박) 상태만 유효한 진입 패턴으로 인정
+        is_valid_entry = breakout_status in ("fresh", "pre")
+        return {
+            "is_cup_handle": best["score"] >= 60 and is_valid_entry,
+            "score": best["score"],
+            "reasons": [f"☕ 컵앤핸들 패턴 ({best['handle_days']}일 핸들)"] + best["reasons"],
+            "left_rim": round(best["left_rim"]),
+            "right_rim": round(best["right_rim"]),
+            "bottom": round(best["bottom"]),
+            "cup_depth_pct": round(best["cup_depth"] * 100, 1),
+            "handle_days": best["handle_days"],
+            "breakout_status": breakout_status,
+        }
+
     def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
         """가격 패턴 신호 체크 (눌림목 포함)"""
         if len(ohlcv_data) < 15:
@@ -672,6 +853,11 @@ class PricePatternSignal:
                 reasons.append(f"20일 상승 추세 (+{returns_20d*100:.1f}%)")
                 score += 15
 
+        # 패턴 5: 컵앤핸들 (점수에 반영하지 않고 별도 필드로 반환)
+        cup_handle_result = None
+        if len(ohlcv_data) >= 60:
+            cup_handle_result = self.detect_cup_and_handle(ohlcv_data)
+
         # 신호 강도 결정
         if score >= 70:
             strength = SignalStrength.HIGH
@@ -693,6 +879,10 @@ class PricePatternSignal:
         # 눌림목 정보 추가
         if pullback_info:
             result["pullback"] = pullback_info
+
+        # 컵앤핸들 별도 필드 (점수 미반영, 독립 판단용)
+        if cup_handle_result is not None:
+            result["cup_handle"] = cup_handle_result
 
         return result
 
@@ -1188,6 +1378,126 @@ class MultiTFMomentumPlusSignal:
             "ma20": curr_ma20,
             "ma60": curr_ma60,
             "volume_ratio": vol_ratio,
+        }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 분봉 진입 타이밍 신호 (단타 진입 + 스윙 홀딩 조합)
+# ═══════════════════════════════════════════════════════════════
+
+class MinuteBreakoutSignal:
+    """분봉 진입 타이밍 신호 — 단타 진입 + 스윙 홀딩 조합용
+
+    일봉 기반 종목 스크리닝 이후, 실제 진입 타이밍을 분봉으로 확인.
+    "눌림목 반등" 또는 "분봉 고점 돌파" 시점을 포착한다.
+
+    점수 구조:
+        분봉 10봉 고점 돌파:      +25  (단기 모멘텀 확인)
+        거래량 급증 (2배 이상):   +25 / 증가 (1.5배): +15
+        단기 상승 추세:           +20  (최근 5봉 양봉 60% 이상)
+        VWAP 상단:               +15  (장중 평균 단가 위)
+        눌림목 반등 보너스:        +15  (장중 고점 대비 -2~-7% 구간)
+
+    과열 차단: 장 시작 첫봉 시가 대비 +8% 이상 → 즉시 HOLD
+    BUY 기준: 40점 이상
+    """
+
+    MIN_CANDLES = 10
+
+    def check_signal(self, candles: list) -> Dict:
+        """
+        Args:
+            candles: KIS 분봉 리스트 [{time, open, high, low, close, volume}, ...]
+                     시간 오름차순 (get_minute_chart 반환값)
+
+        Returns:
+            {"signal": "BUY"|"HOLD", "strength": ..., "score": int, "reasons": [...], ...}
+        """
+        if len(candles) < self.MIN_CANDLES:
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": [f"분봉 데이터 부족 (최소 {self.MIN_CANDLES}봉, 현재 {len(candles)}봉)"],
+            }
+
+        latest = candles[-1]
+        current_price = latest["close"]
+        current_volume = latest["volume"]
+
+        # 최근 10봉 (현재봉 제외)
+        lookback = candles[-self.MIN_CANDLES - 1:-1]
+
+        score = 0
+        reasons = []
+
+        # ── 과열 차단: 장 시작 첫봉 시가 대비 +8% 이상 ────────────────
+        first_open = candles[0]["open"] if candles[0]["open"] > 0 else current_price
+        intraday_change = (current_price - first_open) / first_open * 100 if first_open > 0 else 0
+        if intraday_change >= 8.0:
+            reasons.append(f"[과열차단] 장중 +{intraday_change:.1f}% (≥8% 진입 위험)")
+            return {
+                "signal": SignalType.HOLD,
+                "strength": SignalStrength.LOW,
+                "score": 0,
+                "reasons": reasons,
+                "intraday_change": round(intraday_change, 2),
+            }
+
+        # ── 1. 분봉 10봉 고점 돌파 ─────────────────────────────────────
+        recent_high = max(c["high"] for c in lookback)
+        if current_price > recent_high:
+            reasons.append(f"분봉 10봉 고점 돌파 ({recent_high:,} → {current_price:,})")
+            score += 25
+
+        # ── 2. 거래량 급증 ──────────────────────────────────────────────
+        avg_vol = sum(c["volume"] for c in lookback) / len(lookback) if lookback else 0
+        vol_ratio = current_volume / avg_vol if avg_vol > 0 else 0
+        if vol_ratio >= 2.0:
+            reasons.append(f"분봉 거래량 급증 ({vol_ratio:.1f}배)")
+            score += 25
+        elif vol_ratio >= 1.5:
+            reasons.append(f"분봉 거래량 증가 ({vol_ratio:.1f}배)")
+            score += 15
+
+        # ── 3. 단기 상승 추세: 최근 5봉 양봉 비율 ─────────────────────
+        last5 = candles[-6:-1] if len(candles) >= 6 else candles[:-1]
+        bullish_count = sum(1 for c in last5 if c["close"] >= c["open"])
+        if last5 and bullish_count / len(last5) >= 0.6:
+            reasons.append(f"단기 상승 추세 (최근 5봉 양봉 {bullish_count}/{len(last5)})")
+            score += 20
+
+        # ── 4. VWAP 상단 ────────────────────────────────────────────────
+        total_value = sum(c["close"] * c["volume"] for c in candles if c["volume"] > 0)
+        total_vol = sum(c["volume"] for c in candles)
+        vwap = total_value / total_vol if total_vol > 0 else 0
+        if vwap > 0 and current_price > vwap:
+            reasons.append(f"VWAP 상단 ({vwap:,.0f})")
+            score += 15
+
+        # ── 5. 눌림목 반등 보너스 ───────────────────────────────────────
+        intraday_high = max(c["high"] for c in candles)
+        from_high_pct = (current_price - intraday_high) / intraday_high * 100 if intraday_high > 0 else 0
+        if -7.0 <= from_high_pct <= -2.0 and bullish_count >= 2:
+            reasons.append(f"눌림목 반등 구간 (고점 대비 {from_high_pct:.1f}%)")
+            score += 15
+
+        signal = SignalType.BUY if score >= 40 else SignalType.HOLD
+        if score >= 65:
+            strength = SignalStrength.HIGH
+        elif score >= 40:
+            strength = SignalStrength.MEDIUM
+        else:
+            strength = SignalStrength.LOW
+
+        return {
+            "signal": signal,
+            "strength": strength,
+            "score": score,
+            "reasons": reasons,
+            "vol_ratio": round(vol_ratio, 2),
+            "intraday_change": round(intraday_change, 2),
+            "vwap": round(vwap, 0) if vwap > 0 else None,
         }
 
 

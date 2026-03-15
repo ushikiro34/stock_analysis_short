@@ -282,15 +282,18 @@ async def get_stock_weekly(code: str, market: str = "KR"):
             df = await loop.run_in_executor(
                 None,
                 lambda: pykrx_stock.get_market_ohlcv_by_date(
-                    start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), code, frequency="w"
+                    start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), code, freq="d"
                 ),
             )
             if df.empty:
                 return []
+            # 일봉 → 주봉 리샘플 (pykrx는 weekly 미지원)
+            df_w = df.resample("W-FRI").agg({
+                "시가": "first", "고가": "max", "저가": "min", "종가": "last", "거래량": "sum"
+            }).dropna(subset=["거래량"])
+            df_w = df_w[df_w["거래량"] > 0]
             results = []
-            for date, row in df.iterrows():
-                if int(row["거래량"]) == 0:
-                    continue
+            for date, row in df_w.iterrows():
                 results.append({
                     "time": date.strftime("%Y-%m-%d"),
                     "open": int(row["시가"]),
@@ -323,7 +326,7 @@ async def get_stock_minute(code: str, market: str = "KR"):
             from ...us.yfinance_client import get_us_minute_chart
             results = await get_us_minute_chart(code)
         else:
-            results = await kis_client.get_minute_chart(code)
+            results = await kis_client.get_full_day_minute_chart(code)
         _minute_cache[cache_key] = {"data": results, "ts": now}
         return results
     except Exception as e:

@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { runBacktest, type BacktestRequest, type BacktestResult, type Market } from '../lib/api';
 import { BarChart3, Loader2, Play, TrendingDown, TrendingUp } from 'lucide-react';
+import type { OptimizedParams } from '../App';
 
 interface BacktestDashboardProps {
     market: Market;
+    optimizedParams?: OptimizedParams | null;
 }
 
-export default function BacktestDashboard({ market }: BacktestDashboardProps) {
+export default function BacktestDashboard({ market, optimizedParams }: BacktestDashboardProps) {
     const [result, setResult] = useState<BacktestResult | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -19,6 +21,20 @@ export default function BacktestDashboard({ market }: BacktestDashboardProps) {
     const [minScore, setMinScore] = useState(60);
     const [stopLoss, setStopLoss] = useState(-0.02);
     const [maxHoldingDays, setMaxHoldingDays] = useState(5);
+
+    // 최적화 파라미터 수신 시 폼 자동 적용
+    const [appliedBanner, setAppliedBanner] = useState(false);
+    useEffect(() => {
+        if (!optimizedParams) return;
+        setSymbols(optimizedParams.symbols);
+        setDays(optimizedParams.days);
+        setStopLoss(optimizedParams.stopLoss);
+        setMinScore(optimizedParams.minScore);
+        setMaxHoldingDays(optimizedParams.maxHoldingDays);
+        setAppliedBanner(true);
+        const t = setTimeout(() => setAppliedBanner(false), 4000);
+        return () => clearTimeout(t);
+    }, [optimizedParams?._appliedAt]);
 
     const handleRun = async () => {
         setLoading(true);
@@ -69,6 +85,11 @@ export default function BacktestDashboard({ market }: BacktestDashboardProps) {
                         <BarChart3 className="text-blue-400" size={28} />
                         백테스팅
                     </h2>
+                    {appliedBanner && (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 border border-blue-500/50 rounded-lg text-sm text-blue-300 mb-2">
+                            ✅ 최적화 파라미터가 적용되었습니다
+                        </div>
+                    )}
                 </div>
 
                 <div className="space-y-4 bg-slate-800/50 rounded-xl p-4 border border-slate-700">

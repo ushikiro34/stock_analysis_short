@@ -4,7 +4,7 @@ import ScoreCard from '../components/ScoreCard';
 import RiskCard from '../components/RiskCard';
 import SurgeList from '../components/SurgeList';
 import { Loader2, TrendingUp, TrendingDown } from 'lucide-react';
-import { fetchStockScore, fetchDailyChart, fetchWeeklyChart, fetchMinuteChart, fetchSurgeStocks, type StockScore, type SurgeStock, type Market } from '../lib/api';
+import { fetchStockScore, fetchDailyChart, fetchWeeklyChart, fetchMinuteChart, fetchSurgeStocks, fetchEntrySignal, type StockScore, type SurgeStock, type Market, type EntrySignal } from '../lib/api';
 import type { StockFilter } from '../App';
 
 type ChartMode = 'daily' | 'weekly' | 'minute';
@@ -23,6 +23,8 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [chartMode, setChartMode] = useState<ChartMode>('daily');
+    const [cupHandle, setCupHandle] = useState<EntrySignal['cup_handle'] | null | undefined>(undefined);
+    const [cupHandleLoading, setCupHandleLoading] = useState(false);
 
     // Surge stocks state
     const [surgeStocks, setSurgeStocks] = useState<SurgeStock[]>([]);
@@ -70,6 +72,7 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
         setError(null);
         setSurgeLoading(true);
         setChartMode('daily');
+        setCupHandle(undefined);
 
         const loadSurge = async () => {
             try {
@@ -171,6 +174,19 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
         return () => clearInterval(interval);
     }, [loadStockData]);
 
+    // Fetch cup & handle data independently (pattern strategy only)
+    useEffect(() => {
+        if (!stockCode) { setCupHandle(undefined); return; }
+        let cancelled = false;
+        setCupHandle(undefined);
+        setCupHandleLoading(true);
+        fetchEntrySignal(stockCode, market, 'pattern')
+            .then(sig => { if (!cancelled) setCupHandle(sig.cup_handle ?? null); })
+            .catch(() => { if (!cancelled) setCupHandle(null); })
+            .finally(() => { if (!cancelled) setCupHandleLoading(false); });
+        return () => { cancelled = true; };
+    }, [stockCode, market]);
+
     // Build warnings from score
     const warnings: string[] = [];
     if (score) {
@@ -242,7 +258,24 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                         <div className="bg-surface rounded-xl border border-slate-700 p-4 mb-4">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <h2 className="text-2xl font-bold mb-1">{stockName}</h2>
+                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                        <h2 className="text-2xl font-bold">{stockName}</h2>
+                                        {cupHandleLoading && (
+                                            <span className="text-xs text-slate-500 animate-pulse">☕ 분석중...</span>
+                                        )}
+                                        {!cupHandleLoading && cupHandle && (
+                                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm font-bold ${cupHandle.breakout_status === 'fresh' ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30' :
+                                                    cupHandle.breakout_status === 'pre' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30' :
+                                                        cupHandle.breakout_status === 'expired' ? 'bg-slate-600/60 text-slate-400' :
+                                                            'bg-slate-700/60 text-slate-400'
+                                                }`}>
+                                                ☕
+                                                {cupHandle.breakout_status === 'fresh' ? 'C&H 돌파' :
+                                                    cupHandle.breakout_status === 'pre' ? 'C&H 임박' :
+                                                        cupHandle.breakout_status === 'expired' ? 'C&H 소멸' : 'C&H 형성중'}
+                                            </span>
+                                        )}
+                                    </div>
                                     <p className="text-sm text-slate-400">{stockCode}</p>
                                 </div>
                                 {surgeInfo && (
@@ -250,9 +283,8 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                                         <div className="text-3xl font-mono font-bold mb-1">
                                             {market === 'US' ? '$' : ''}{surgeInfo.price.toLocaleString()}{market === 'KR' ? '원' : ''}
                                         </div>
-                                        <div className={`flex items-center justify-end gap-1 text-sm font-mono ${
-                                            surgeInfo.change_rate > 0 ? 'text-red-400' : 'text-blue-400'
-                                        }`}>
+                                        <div className={`flex items-center justify-end gap-1 text-sm font-mono ${surgeInfo.change_rate > 0 ? 'text-red-400' : 'text-blue-400'
+                                            }`}>
                                             {surgeInfo.change_rate > 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
                                             <span>
                                                 {surgeInfo.change_rate > 0 ? '+' : ''}{market === 'US' ? '$' : ''}
@@ -271,31 +303,28 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                         <div className="flex gap-2 mb-3">
                             <button
                                 onClick={() => setChartMode('daily')}
-                                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                                    chartMode === 'daily'
+                                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${chartMode === 'daily'
                                         ? 'bg-primary text-white'
                                         : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                                }`}
+                                    }`}
                             >
                                 일봉
                             </button>
                             <button
                                 onClick={() => setChartMode('weekly')}
-                                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                                    chartMode === 'weekly'
+                                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${chartMode === 'weekly'
                                         ? 'bg-primary text-white'
                                         : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                                }`}
+                                    }`}
                             >
                                 주봉
                             </button>
                             <button
                                 onClick={() => setChartMode('minute')}
-                                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                                    chartMode === 'minute'
+                                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${chartMode === 'minute'
                                         ? 'bg-primary text-white'
                                         : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                                }`}
+                                    }`}
                             >
                                 분봉
                             </button>
@@ -304,7 +333,7 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                         {/* Chart - Reduced Size */}
                         <div className="flex-1 min-h-0">
                             {candles.length > 0 ? (
-                                <CandleChart data={candles} />
+                                <CandleChart key={`${stockCode}-${chartMode}`} data={candles} />
                             ) : (
                                 <div className="bg-surface rounded-xl border border-slate-700 h-full flex items-center justify-center text-slate-500">
                                     차트 데이터 없음
@@ -395,6 +424,45 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                             </div>
                         )}
 
+                        {/* Cup & Handle Pattern — show when loading or pattern found */}
+                        {(cupHandleLoading || cupHandle) && (
+                            <div className={`rounded-xl border p-4 ${cupHandle?.breakout_status === 'fresh' ? 'bg-purple-900/20 border-purple-600/60' :
+                                    cupHandle?.breakout_status === 'pre' ? 'bg-orange-900/20 border-orange-600/60' :
+                                        'bg-surface border-slate-700'
+                                }`}>
+                                <h3 className="text-sm font-bold text-slate-300 mb-3">☕ 컵앤핸들 패턴</h3>
+                                {cupHandleLoading ? (
+                                    <p className="text-xs text-slate-500">분석 중...</p>
+                                ) : cupHandle ? (
+                                    <>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${cupHandle.breakout_status === 'fresh' ? 'bg-purple-600 text-white' :
+                                                    cupHandle.breakout_status === 'pre' ? 'bg-orange-500 text-white' :
+                                                        cupHandle.breakout_status === 'expired' ? 'bg-slate-600 text-slate-300' :
+                                                            'bg-slate-700 text-slate-400'
+                                                }`}>
+                                                {cupHandle.breakout_status === 'fresh' ? '돌파 확인' :
+                                                    cupHandle.breakout_status === 'pre' ? '돌파 임박' :
+                                                        cupHandle.breakout_status === 'expired' ? '기회 소멸' : '형성 중'}
+                                            </span>
+                                            <span className="text-sm font-bold text-slate-300">{cupHandle.score}점</span>
+                                        </div>
+                                        <ul className="space-y-1">
+                                            {cupHandle.reasons.map((r, i) => (
+                                                <li key={i} className={`text-xs flex items-start gap-1 ${cupHandle.breakout_status === 'expired' ? 'text-slate-500' : 'text-slate-300'
+                                                    }`}>
+                                                    <span className="mt-0.5 shrink-0">◆</span>
+                                                    <span>{r}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </>
+                                ) : (
+                                    <p className="text-xs text-slate-500">패턴 없음</p>
+                                )}
+                            </div>
+                        )}
+
                         {/* Fundamental Data */}
                         <div className="bg-surface rounded-xl border border-slate-700 p-4">
                             <h3 className="text-sm font-bold text-slate-300 mb-3">📊 펀더멘털</h3>
@@ -402,34 +470,30 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                                 <div className="space-y-2 text-sm">
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">PER</span>
-                                        <span className={`font-mono ${
-                                            (fundamental.per ?? 0) < 20 ? 'text-green-400' :
-                                            (fundamental.per ?? 0) > 50 ? 'text-red-400' : 'text-slate-300'
-                                        }`}>
+                                        <span className={`font-mono ${(fundamental.per ?? 0) < 20 ? 'text-green-400' :
+                                                (fundamental.per ?? 0) > 50 ? 'text-red-400' : 'text-slate-300'
+                                            }`}>
                                             {fundamental.per != null ? fundamental.per.toFixed(1) : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">PBR</span>
-                                        <span className={`font-mono ${
-                                            (fundamental.pbr ?? 0) < 1.5 ? 'text-green-400' : 'text-slate-300'
-                                        }`}>
+                                        <span className={`font-mono ${(fundamental.pbr ?? 0) < 1.5 ? 'text-green-400' : 'text-slate-300'
+                                            }`}>
                                             {fundamental.pbr != null ? fundamental.pbr.toFixed(2) : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">ROE</span>
-                                        <span className={`font-mono ${
-                                            (fundamental.roe ?? 0) > 10 ? 'text-green-400' : 'text-slate-300'
-                                        }`}>
+                                        <span className={`font-mono ${(fundamental.roe ?? 0) > 10 ? 'text-green-400' : 'text-slate-300'
+                                            }`}>
                                             {fundamental.roe != null ? `${fundamental.roe.toFixed(1)}%` : '-'}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">EPS</span>
-                                        <span className={`font-mono ${
-                                            (fundamental.eps ?? 0) > 0 ? 'text-slate-300' : 'text-red-400'
-                                        }`}>
+                                        <span className={`font-mono ${(fundamental.eps ?? 0) > 0 ? 'text-slate-300' : 'text-red-400'
+                                            }`}>
                                             {fundamental.eps != null ? `${market === 'US' ? '$' : ''}${fundamental.eps.toLocaleString()}` : '-'}
                                         </span>
                                     </div>
@@ -452,10 +516,9 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                                 <div className="space-y-2 text-sm">
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">RSI(14)</span>
-                                        <span className={`font-mono ${
-                                            (technical.rsi ?? 50) > 70 ? 'text-red-400' :
-                                            (technical.rsi ?? 50) < 30 ? 'text-blue-400' : 'text-slate-300'
-                                        }`}>
+                                        <span className={`font-mono ${(technical.rsi ?? 50) > 70 ? 'text-red-400' :
+                                                (technical.rsi ?? 50) < 30 ? 'text-blue-400' : 'text-slate-300'
+                                            }`}>
                                             {technical.rsi != null ? technical.rsi.toFixed(1) : '-'}
                                         </span>
                                     </div>
@@ -479,9 +542,8 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-400">60일 수익률</span>
-                                        <span className={`font-mono ${
-                                            (technical.return_60d ?? 0) > 0 ? 'text-red-400' : 'text-blue-400'
-                                        }`}>
+                                        <span className={`font-mono ${(technical.return_60d ?? 0) > 0 ? 'text-red-400' : 'text-blue-400'
+                                            }`}>
                                             {technical.return_60d != null
                                                 ? `${technical.return_60d > 0 ? '+' : ''}${technical.return_60d.toFixed(1)}%`
                                                 : '-'}

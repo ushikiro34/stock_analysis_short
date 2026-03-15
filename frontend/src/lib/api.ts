@@ -91,6 +91,8 @@ export interface EntrySignal {
     current_price?: number;
     breakdown?: { volume?: { score: number }; technical?: { score: number }; pattern?: { score: number } };
     stock_info?: { name?: string; price?: number; change_rate?: number };
+    cup_handle_confirmed?: boolean;
+    cup_handle?: { score: number; reasons: string[]; cup_depth_pct?: number; handle_days?: number; breakout_status?: string };
 }
 
 export interface BacktestRequest {
@@ -316,6 +318,9 @@ export const fetchMinuteChart = (code: string, market: Market): Promise<OHLCV[]>
     get(`/stocks/${code}/minute?market=${market}`);
 
 // ── Signals ───────────────────────────────────────────────────
+
+export const fetchEntrySignal = (code: string, market: Market, strategy = 'pattern'): Promise<EntrySignal> =>
+    get(`/signals/entry/${code}?market=${market}&strategy=${strategy}`);
 
 export const scanSignals = (
     market: Market,

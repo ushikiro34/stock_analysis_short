@@ -48,6 +48,9 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
     }, [market, strategy, minScore]);
 
     const getSignalColor = (signal: EntrySignal) => {
+        if (signal.cup_handle_confirmed && signal.signal !== 'BUY') {
+            return 'bg-purple-500/20 border-purple-500 text-purple-300';
+        }
         if (signal.signal === 'BUY') {
             if (signal.strength === 'high') return 'bg-green-500/20 border-green-500 text-green-400';
             if (signal.strength === 'medium') return 'bg-yellow-500/20 border-yellow-500 text-yellow-400';
@@ -157,7 +160,7 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
                                     {/* Header */}
                                     <div className="flex items-start justify-between mb-4">
                                         <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-2">
+                                            <div className="flex items-center gap-2 mb-2 flex-wrap">
                                                 <h3 className="text-xl font-bold">
                                                     {signal.stock_info?.name
                                                         ? `${signal.stock_info.name}(${signal.code})`
@@ -166,6 +169,16 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
                                                 <span className={`px-2 py-1 rounded text-xs font-bold ${getStrengthBadge(signal.strength)}`}>
                                                     {signal.strength.toUpperCase()}
                                                 </span>
+                                                {signal.cup_handle_confirmed && (
+                                                    <span className="px-2 py-1 rounded text-xs font-bold bg-purple-600 text-white" title="컵앤핸들 패턴 감지">
+                                                        ☕ C&H
+                                                    </span>
+                                                )}
+                                                {signal.cup_handle_confirmed && signal.signal !== 'BUY' && (
+                                                    <span className="px-2 py-1 rounded text-xs font-medium bg-purple-900/60 text-purple-300">
+                                                        패턴 진입
+                                                    </span>
+                                                )}
                                             </div>
                                             {signal.current_price && (
                                                 <div className="flex items-center gap-1 text-slate-300">
@@ -204,6 +217,48 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
                                                     <div className="text-lg font-bold">{signal.breakdown.pattern.score.toFixed(0)}</div>
                                                 </div>
                                             )}
+                                        </div>
+                                    )}
+
+                                    {/* Cup & Handle Detail */}
+                                    {signal.cup_handle && (
+                                        <div className={`mb-4 rounded-lg p-3 border ${
+                                            signal.cup_handle_confirmed
+                                                ? 'bg-purple-900/20 border-purple-700/50'
+                                                : signal.cup_handle.breakout_status === 'expired'
+                                                    ? 'bg-slate-800/40 border-slate-600/50'
+                                                    : 'bg-slate-800/40 border-slate-600/50'
+                                        }`}>
+                                            <div className={`text-xs mb-2 font-semibold flex items-center gap-1 ${
+                                                signal.cup_handle_confirmed ? 'text-purple-300' : 'text-slate-400'
+                                            }`}>
+                                                ☕ 컵앤핸들 패턴
+                                                {signal.cup_handle.breakout_status && (
+                                                    <span className={`ml-1 px-1.5 py-0.5 rounded text-xs ${
+                                                        signal.cup_handle.breakout_status === 'fresh' ? 'bg-purple-600 text-white' :
+                                                        signal.cup_handle.breakout_status === 'pre' ? 'bg-orange-500 text-white' :
+                                                        signal.cup_handle.breakout_status === 'expired' ? 'bg-slate-600 text-slate-300' :
+                                                        'bg-slate-700 text-slate-400'
+                                                    }`}>
+                                                        {signal.cup_handle.breakout_status === 'fresh' ? '돌파 확인' :
+                                                         signal.cup_handle.breakout_status === 'pre' ? '돌파 임박' :
+                                                         signal.cup_handle.breakout_status === 'expired' ? '기회 소멸' : '형성 중'}
+                                                    </span>
+                                                )}
+                                                <span className={`ml-auto font-bold ${signal.cup_handle_confirmed ? 'text-purple-400' : 'text-slate-500'}`}>
+                                                    {signal.cup_handle.score}점
+                                                </span>
+                                            </div>
+                                            <ul className="space-y-1">
+                                                {signal.cup_handle.reasons.map((r, i) => (
+                                                    <li key={i} className={`text-xs flex items-start gap-2 ${
+                                                        signal.cup_handle_confirmed ? 'text-purple-200' : 'text-slate-500'
+                                                    }`}>
+                                                        <span className={`mt-0.5 ${signal.cup_handle_confirmed ? 'text-purple-400' : 'text-slate-600'}`}>◆</span>
+                                                        <span>{r}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
                                         </div>
                                     )}
 

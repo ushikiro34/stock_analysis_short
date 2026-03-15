@@ -418,6 +418,37 @@ class PaperEngine:
                 open_row.quantity = pos.quantity
         await db.commit()
 
+    async def _check_minute_breakout(self, code: str) -> tuple:
+        """분봉 진입 타이밍 신호 확인 (단타 진입 + 스윙 홀딩).
+
+        Returns:
+            (진입 가능 여부: bool, 분봉 신호 dict)
+        """
+        from ..kis.rest_client import get_kis_client
+        from .signals import MinuteBreakoutSignal
+        try:
+            candles = await get_kis_client().get_minute_chart(code)
+            if not candles:
+                logger.debug(f"[Paper] {code} 분봉 데이터 없음 — 일봉 신호로만 진입")
+                return True, {}
+            result = MinuteBreakoutSignal().check_signal(candles)
+            ok = result["signal"] == "BUY"
+            if ok:
+                logger.info(
+                    f"[Paper] {code} 분봉 진입 확인 score={result['score']} "
+                    f"intraday={result.get('intraday_change', 0):+.1f}% "
+                    f"| {result['reasons']}"
+                )
+            else:
+                logger.debug(
+                    f"[Paper] {code} 분봉 신호 미확인 score={result['score']} — 진입 보류 "
+                    f"| {result['reasons']}"
+                )
+            return ok, result
+        except Exception as e:
+            logger.warning(f"[Paper] {code} 분봉 확인 실패: {e} — 일봉 신호로 진입")
+            return True, {}
+
     async def _scan_and_buy(self, db: AsyncSession, current_prices: dict) -> None:
         from .signal_service import generate_entry_signals_bulk
         from ..kis.rest_client import get_kis_client
@@ -444,7 +475,15 @@ class PaperEngine:
                 price = sig.get("current_price") or current_prices.get(sig["code"])
                 if not price:
                     continue
+
+                # ── 분봉 진입 타이밍 확인 (단타 진입 + 스윙 홀딩) ──────────
+                minute_ok, minute_sig = await self._check_minute_breakout(sig["code"])
+                if not minute_ok:
+                    continue
+
                 sig["_name"] = name_map.get(sig["code"], sig["code"])
+                if minute_sig:
+                    sig["_minute_signal"] = minute_sig
                 await self._do_open(sig, price, db)
 
         except Exception as e:

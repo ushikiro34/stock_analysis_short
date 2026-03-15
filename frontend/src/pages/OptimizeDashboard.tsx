@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { runQuickOptimize, type OptimizeRequest, type OptimizeResult, type Market } from '../lib/api';
 import { Settings, Loader2, Play, Award, TrendingUp } from 'lucide-react';
+import type { OptimizedParams } from '../App';
 
 interface OptimizeDashboardProps {
     market: Market;
+    onApplyParams?: (params: OptimizedParams) => void;
 }
 
-export default function OptimizeDashboard({ market }: OptimizeDashboardProps) {
+export default function OptimizeDashboard({ market, onApplyParams }: OptimizeDashboardProps) {
     const [result, setResult] = useState<OptimizeResult | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -315,14 +317,21 @@ export default function OptimizeDashboard({ market }: OptimizeDashboardProps) {
                             </p>
                             <button
                                 onClick={() => {
-                                    if (result.best_params) {
-                                        const params = result.best_params;
-                                        alert(`최적 파라미터:\n손절: ${(params.stop_loss_ratio * 100).toFixed(1)}%\n익절: ${((params.take_profit_targets?.[1]?.ratio ?? 0) * 100).toFixed(1)}%\n보유 기간: ${params.max_holding_days}일\n진입 점수: ${params.min_entry_score}점`);
+                                    if (result.best_params && onApplyParams) {
+                                        const p = result.best_params;
+                                        onApplyParams({
+                                            symbols,
+                                            days,
+                                            stopLoss: -(p.stop_loss_ratio),
+                                            minScore: p.min_entry_score,
+                                            maxHoldingDays: p.max_holding_days,
+                                            _appliedAt: Date.now(),
+                                        });
                                     }
                                 }}
                                 className="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-lg text-sm font-semibold transition-colors"
                             >
-                                파라미터 복사
+                                백테스팅에 적용 →
                             </button>
                         </div>
                     </div>

@@ -34,9 +34,26 @@ export interface StockFilter {
     stockName: string;
 }
 
+export interface OptimizedParams {
+    symbols: string;
+    days: number;
+    stopLoss: number;
+    minScore: number;
+    maxHoldingDays: number;
+    _appliedAt: number;
+}
+
 function App() {
     const [activeTab, setActiveTab] = useState<Tab>('stocks');
     const [market, setMarket] = useState<Market>('KR');
+
+    // Optimized params shared between Optimize → Backtest tabs
+    const [optimizedParams, setOptimizedParams] = useState<OptimizedParams | null>(null);
+
+    const handleApplyOptimizedParams = useCallback((params: OptimizedParams) => {
+        setOptimizedParams(params);
+        setActiveTab('backtest');
+    }, []);
 
     // Stock filter state
     const [stockFilter, setStockFilter] = useState<StockFilter>({
@@ -591,10 +608,10 @@ function App() {
                     />
                 </div>
                 <div className={`h-full ${activeTab === 'backtest' ? '' : 'hidden'}`}>
-                    <BacktestDashboard market={market} />
+                    <BacktestDashboard market={market} optimizedParams={optimizedParams} />
                 </div>
                 <div className={`h-full ${activeTab === 'optimize' ? '' : 'hidden'}`}>
-                    <OptimizeDashboard market={market} />
+                    <OptimizeDashboard market={market} onApplyParams={handleApplyOptimizedParams} />
                 </div>
                 <div className={`h-full ${activeTab === 'paper' ? '' : 'hidden'}`}>
                     <PaperTradingDashboard

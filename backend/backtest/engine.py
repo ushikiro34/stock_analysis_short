@@ -109,7 +109,7 @@ class BacktestConfig:
 
     # 진입 조건
     entry_strategy: str = "combined"  # volume, technical, pattern, combined, rsi_golden_cross, weekly_rsi_swing, multi_tf_momentum_plus
-    min_entry_score: float = 60.0  # 최소 진입 점수
+    min_entry_score: float = 65.0  # 최소 진입 점수 (페이퍼트레이딩과 동일)
 
     # 청산 조건 — G(보수형) 전략 기본값
     # 검증: 중소형주 8종목 730일 백테스트 D/G/H 비교에서 ROI·MDD 복합 우위 확인
@@ -124,7 +124,7 @@ class BacktestConfig:
     ])
     stop_loss_ratio: float = -0.02  # 하위 호환용 (동적 손절가 초기값으로만 사용)
     trailing_stop_ratio: float = -0.04  # 최고가 대비 -4% (G전략: 구 D의 -5%보다 타이트)
-    max_holding_days: int = 7  # 최대 보유 일수 (G전략: 구 D의 10일보다 단축)
+    max_holding_days: int = 5  # 최대 보유 일수 (페이퍼트레이딩과 동일: 5일)
 
     # 수수료
     commission_rate: float = 0.001  # 0.1% 수수료
@@ -301,6 +301,82 @@ class Backtester:
             return True, f"time_limit_{self.config.max_holding_days}days", 1.0
 
         return False, None, 0.0
+
+    def check_exit_conditions_ohlc(
+        self, trade: Trade, current_date: datetime,
+        bar_open: float, bar_high: float, bar_low: float, bar_close: float
+    ) -> Tuple[bool, Optional[str], float, float]:
+        """OHLC 바 모델로 장중 손절/익절 체크 → (should_exit, reason, volume_pct, exit_price)
+
+        상승일(Close >= Open): 고가(H) → 저가(L) 순서로 가정 (TP 우선)
+        하락일(Close < Open) : 저가(L) → 고가(H) 순서로 가정 (SL 우선)
+        """
+        # 장중 최고가 업데이트 (High 기준)
+        trade.update_price_extremes(bar_high)
+
+        bullish_day = bar_close >= bar_open
+
+        if bullish_day:
+            # 상승일: TP 먼저 (H 기준), 그 다음 SL (L 기준)
+            result = self._check_tp_price(trade, current_date, bar_high)
+            if result[0]:
+                return result
+            result = self._check_sl_price(trade, current_date, bar_low)
+            if result[0]:
+                return result
+        else:
+            # 하락일: SL 먼저 (L 기준), 그 다음 TP (H 기준)
+            result = self._check_sl_price(trade, current_date, bar_low)
+            if result[0]:
+                return result
+            result = self._check_tp_price(trade, current_date, bar_high)
+            if result[0]:
+                return result
+
+        # 시간 기반 청산 (종가 기준)
+        holding_days = (current_date - trade.entry_time).days
+        if holding_days >= self.config.max_holding_days:
+            return True, f"time_limit_{self.config.max_holding_days}days", 1.0, bar_close
+
+        return False, None, 0.0, bar_close
+
+    def _check_tp_price(self, trade: Trade, _current_date: datetime,
+                        check_price: float) -> Tuple[bool, Optional[str], float, float]:
+        """TP 조건 체크 (check_price = 장중 High)"""
+        profit_ratio = (check_price - trade.entry_price) / trade.entry_price
+        for i, target in enumerate(self.config.take_profit_targets):
+            if i in trade.executed_tp_targets:
+                continue
+            if profit_ratio >= target["ratio"]:
+                trade.executed_tp_targets.add(i)
+                exit_price = trade.entry_price * (1 + target["ratio"])
+                return True, target["name"], target["volume_pct"], exit_price
+        return False, None, 0.0, check_price
+
+    def _check_sl_price(self, trade: Trade, current_date: datetime,
+                        check_price: float) -> Tuple[bool, Optional[str], float, float]:
+        """SL 조건 체크 (check_price = 장중 Low)"""
+        profit_ratio = (check_price - trade.entry_price) / trade.entry_price
+
+        # 트레일링 스탑
+        trailing_threshold = trade.highest_price * (1 + self.config.trailing_stop_ratio)
+        if check_price <= trailing_threshold and trade.highest_price > trade.entry_price:
+            return True, "trailing_stop", 1.0, max(check_price, trailing_threshold)
+
+        if trade.breakeven_active:
+            stop_ratio = (trade.dynamic_stop_price - trade.entry_price) / trade.entry_price
+            if profit_ratio <= stop_ratio:
+                return True, "손절(본전)", 1.0, trade.dynamic_stop_price
+        else:
+            for i, sl in enumerate(self.config.stop_loss_targets):
+                if i in trade.executed_sl_targets:
+                    continue
+                if profit_ratio <= sl["ratio"]:
+                    trade.executed_sl_targets.add(i)
+                    exit_price = trade.entry_price * (1 + sl["ratio"])
+                    return True, sl["name"], sl["volume_pct"], exit_price
+
+        return False, None, 0.0, check_price
 
     def update_portfolio_value(self, current_date: datetime, current_prices: Dict[str, float]):
         """포트폴리오 가치 업데이트"""
@@ -522,20 +598,24 @@ async def run_simple_backtest(
         # 각 날짜별로 진입/청산 시뮬레이션
         for i in range(20, len(ohlcv_data)):
             current_date = ohlcv_data.index[i]
-            current_price = ohlcv_data.iloc[i]["Close"]
+            bar = ohlcv_data.iloc[i]
+            bar_open = float(bar["Open"])
+            bar_high = float(bar["High"])
+            bar_low = float(bar["Low"])
+            bar_close = float(bar["Close"])
 
             # 백테스팅 기간(start_date) 이전은 워밍업 구간 — 포지션/기록 없음
             in_period = current_date >= start_date
 
-            # 기존 포지션 청산 체크
+            # 기존 포지션 청산 체크 (OHLC 바 모델)
             if in_period:
                 for trade in backtester.open_positions[:]:
                     if trade.code == code:
-                        should_exit, exit_reason, volume_pct = backtester.check_exit_conditions(
-                            trade, current_date, current_price
+                        should_exit, exit_reason, volume_pct, exit_price = backtester.check_exit_conditions_ohlc(
+                            trade, current_date, bar_open, bar_high, bar_low, bar_close
                         )
                         if should_exit:
-                            backtester.close_position(trade, current_date, current_price, exit_reason, volume_pct)
+                            backtester.close_position(trade, current_date, exit_price, exit_reason, volume_pct)
 
             # 신규 진입 체크
             if in_period and backtester.can_open_position():
@@ -558,18 +638,23 @@ async def run_simple_backtest(
                         code=code,
                         name=code,
                         entry_time=current_date,
-                        entry_price=current_price,
+                        entry_price=bar_close,
                         entry_signal=signal
                     )
 
             # 포트폴리오 가치 업데이트 (백테스팅 기간만)
             if in_period:
-                current_prices = {trade.code: current_price for trade in backtester.open_positions if trade.code == code}
+                current_prices = {trade.code: bar_close for trade in backtester.open_positions if trade.code == code}
                 backtester.update_portfolio_value(current_date, current_prices)
 
-    # 미청산 포지션 강제 청산
+    # 미청산 포지션 강제 청산 (각 종목의 마지막 종가 사용)
+    last_prices: Dict[str, float] = {}
+    for code, ohlcv_data in symbol_data.items():
+        filtered = ohlcv_data[ohlcv_data.index <= end_date]
+        if not filtered.empty:
+            last_prices[code] = float(filtered.iloc[-1]["Close"])
     for trade in backtester.open_positions[:]:
-        last_price = trade.entry_price  # 실제로는 마지막 날 종가 사용
+        last_price = last_prices.get(trade.code, trade.entry_price)
         backtester.close_position(trade, end_date, last_price, "backtest_end")
 
     return backtester.generate_report()

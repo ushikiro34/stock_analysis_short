@@ -135,6 +135,11 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
     signal_manager = SignalManager()
     result = signal_manager.generate_entry_signal(ohlcv_data, strategy)
 
+    # 컵앤핸들 감지 여부 추출 (combined → breakdown.pattern, pattern → 직접)
+    pattern_result = result.get("breakdown", {}).get("pattern") or result
+    cup_handle_data = pattern_result.get("cup_handle", {})
+    cup_handle_confirmed = bool(cup_handle_data.get("is_cup_handle", False))
+
     return {
         "code": code,
         "market": market,
@@ -144,7 +149,9 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
         "reasons": result["reasons"],
         "timestamp": datetime.now().isoformat(),
         "current_price": float(ohlcv_data["Close"].iloc[-1]),
-        "breakdown": result.get("breakdown", {})
+        "breakdown": result.get("breakdown", {}),
+        "cup_handle_confirmed": cup_handle_confirmed,
+        "cup_handle": cup_handle_data if cup_handle_data else None,
     }
 
 
@@ -171,8 +178,10 @@ async def generate_entry_signals_bulk(codes: List[str], market: str = "KR",
             try:
                 signal = await generate_entry_signal(code, market, strategy)
 
-                # 필터링: BUY 신호이고 최소 점수 이상
-                if signal["signal"] == "BUY" and signal["score"] >= min_score:
+                # 필터링: BUY + 최소점수 이상 OR 컵앤핸들 감지 (점수 미달도 포함)
+                passes_score = signal["signal"] == "BUY" and signal["score"] >= min_score
+                is_cup_handle = signal.get("cup_handle_confirmed", False)
+                if passes_score or is_cup_handle:
                     return signal
 
                 return None

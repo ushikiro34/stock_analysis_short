@@ -1,4 +1,4 @@
-# 매매 전략 시스템 변경 이력 (최종 업데이트: 2026-03-12)
+# 매매 전략 시스템 변경 이력 (최종 업데이트: 2026-03-15)
 
 ## 개요
 
@@ -555,3 +555,239 @@ title.replace(/^\d+\.\s*/, '').trim()
 GROQ_API_KEY=...        # 필수 — Groq 무료 API
 GEMINI_API_KEY=...      # 선택 — Gemini 전환 시 사용
 ```
+
+---
+
+# 컵앤핸들 패턴 UI 통합 + 백테스팅 OHLC 바 모델 (2026-03-15)
+
+## 1. 컵앤핸들(Cup & Handle) UI 개선
+
+### 배경
+
+컵앤핸들 패턴을 종합점수에 반영하지 않고 별도 알림으로 표시. expired 상태 종목도 주식분석 탭에 실시간으로 표시하도록 개선.
+
+### breakout_status 4단계
+
+| 상태 | 의미 | 표시 색상 |
+|------|------|---------|
+| `fresh` | 돌파 발생 (3일 이내) | 보라 |
+| `pre` | 돌파 임박 | 주황 |
+| `expired` | 돌파 실패 / 기간 초과 | 회색 |
+| `forming` | 컵 형성 중 | — |
+
+`is_cup_handle = True` 조건: `score >= 60` AND `breakout_status in ("fresh", "pre")`
+
+### 변경된 파일
+
+#### `backend/core/signal_service.py`
+- `cup_handle_confirmed=False`이어도 `cup_handle` 데이터가 있으면 항상 반환 (이전: None 반환)
+```python
+"cup_handle": cup_handle_data if cup_handle_data else None,  # expired도 포함
+```
+
+#### `frontend/src/lib/api.ts`
+- `EntrySignal` 타입에 `breakout_status` 필드 추가
+- `fetchEntrySignal(code, market, strategy)` 함수 추가
+```typescript
+cup_handle?: { score: number; reasons: string[]; cup_depth_pct?: number; handle_days?: number; breakout_status?: string };
+export const fetchEntrySignal = (code, market, strategy = 'pattern'): Promise<EntrySignal> =>
+    get(`/signals/entry/${code}?market=${market}&strategy=${strategy}`);
+```
+
+#### `frontend/src/pages/StocksDashboard.tsx`
+- 종목 선택 시 pattern 전략으로 C&H 데이터 독립 fetch
+- 종목명 옆 C&H 배지 표시 (fresh=보라, pre=주황, expired=회색)
+- 오른쪽 패널에 "☕ 컵앤핸들" 카드 추가 (점수, 상태, 컵 깊이, 핸들 기간, 상세 이유 포함)
+- `<CandleChart key={`${stockCode}-${chartMode}`}>` — 종목/모드 변경 시 차트 완전 재생성
+
+#### `frontend/src/pages/SignalsDashboard.tsx`
+- `cup_handle_confirmed` 여부 관계없이 `cup_handle` 데이터가 있으면 C&H 박스 표시
+- expired: 회색 스타일, confirmed(fresh/pre): 보라 스타일로 구분
+
+---
+
+## 2. 차트 줌/위치 초기화 버그 수정
+
+### 문제
+
+차트를 확대하거나 위치를 이동한 후 데이터 폴링 갱신(30초)이 발생하면 뷰포트가 초기 상태로 리셋되는 현상.
+
+### 원인
+
+`useEffect([data])`에서 매번 `chart.remove()` + `createChart()` 를 호출하여 차트 전체가 재생성되었기 때문.
+
+### 수정: `frontend/src/components/CandleChart.tsx`
+
+완전 재작성. 차트 생성과 데이터 갱신을 분리.
+
+```typescript
+// 차트 생성 — 마운트 시 1회
+useEffect(() => {
+    const chart = createChart(containerRef.current, { ... });
+    const series = chart.addCandlestickSeries({ ... });
+    chartRef.current = chart;
+    seriesRef.current = series;
+    firstDataRef.current = true;
+    const ro = new ResizeObserver(handleResize);
+    ro.observe(containerRef.current);
+    return () => { ro.disconnect(); chart.remove(); };
+}, []);
+
+// 데이터 갱신 — series.setData()만 호출 (뷰포트 유지)
+useEffect(() => {
+    if (!seriesRef.current || data.length === 0) return;
+    seriesRef.current.setData(data);
+    if (firstDataRef.current && chartRef.current) {
+        chartRef.current.timeScale().fitContent();  // 최초만 fitContent
+        firstDataRef.current = false;
+    }
+}, [data]);
+```
+
+- `window.addEventListener('resize')` → `ResizeObserver`로 교체
+
+---
+
+## 3. 주봉/분봉 데이터 문제 수정
+
+### 문제
+
+- 주봉: "데이터 없음" 오류
+- 분봉: 30봉만 반환 (장중 데이터 부족)
+
+### 수정: `backend/api/routers/stocks.py`
+
+#### 주봉 (`/stocks/{code}/weekly`)
+- 원인: pykrx `get_market_ohlcv_by_date` 파라미터명이 `freq` (`frequency` 아님), `'w'` 미지원
+- 수정: `freq="d"` (일봉)로 조회 후 pandas `resample("W-FRI")`로 주봉 변환
+
+```python
+df_w = df.resample("W-FRI").agg({
+    "시가": "first", "고가": "max", "저가": "min", "종가": "last", "거래량": "sum"
+}).dropna(subset=["거래량"])
+```
+
+#### 분봉 (`/stocks/{code}/minute`)
+- 원인: `kis_client.get_minute_chart()` = 최근 30봉 한계
+- 수정: `kis_client.get_full_day_minute_chart()` — 최대 10회 페이지네이션으로 장 전체 분봉 수집
+
+---
+
+## 4. 최적화 → 백테스팅 파라미터 자동 연동
+
+### 기존 문제
+
+최적화 탭의 "파라미터 복사" 버튼이 클립보드 복사만 하여 백테스팅 입력 필드에 직접 적용 불가.
+
+### 수정 흐름
+
+```
+OptimizeDashboard
+  "백테스팅에 적용 →" 버튼 클릭
+  └→ onApplyParams({ symbols, days, stopLoss, minScore, maxHoldingDays, _appliedAt })
+       └→ App.tsx: handleApplyOptimizedParams()
+            ├→ setOptimizedParams(params)
+            └→ setActiveTab('backtest')  // 탭 자동 전환
+                 └→ BacktestDashboard: useEffect([optimizedParams._appliedAt])
+                      ├→ 폼 자동 적용
+                      └→ "✅ 최적화 파라미터가 적용되었습니다" 배너 4초 표시
+```
+
+#### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|---------|
+| `frontend/src/App.tsx` | `OptimizedParams` 인터페이스, `optimizedParams` 상태, `handleApplyOptimizedParams` 콜백 |
+| `frontend/src/pages/OptimizeDashboard.tsx` | "파라미터 복사" → "백테스팅에 적용 →" 버튼, `onApplyParams` prop |
+| `frontend/src/pages/BacktestDashboard.tsx` | `optimizedParams` prop, `useEffect` 자동 적용, `appliedBanner` 상태 |
+
+---
+
+## 5. 백테스팅 엔진 OHLC 바 모델 도입
+
+### 배경
+
+백테스팅 0% 승률 vs 페이퍼트레이딩 수익 차이 원인 분석:
+
+| 항목 | 백테스팅 (수정 전) | 페이퍼트레이딩 |
+|------|-----------|------------|
+| 진입 최소 점수 | 60점 | 65점 |
+| 최대 보유 기간 | 7일 | 5일 |
+| 손절/익절 체크 | 종가만 | 실시간 (분봉) |
+| 장중 가격 시뮬레이션 | 없음 | 있음 |
+
+### OHLC 바 모델 원리
+
+일봉 High/Low로 장중 손절·익절을 시뮬레이션.
+
+```
+상승일 (Close >= Open): TP 먼저 체크 → SL 체크
+하락일 (Close < Open):  SL 먼저 체크 → TP 체크
+```
+
+### 수정: `backend/backtest/engine.py`
+
+#### 기본값 조정
+```python
+min_entry_score: float = 65.0  # 60 → 65 (페이퍼트레이딩과 동일)
+max_holding_days: int = 5      # 7 → 5 (페이퍼트레이딩과 동일)
+```
+
+#### 신규 메서드: `check_exit_conditions_ohlc()`
+
+```python
+def check_exit_conditions_ohlc(
+    self, trade, current_date, bar_open, bar_high, bar_low, bar_close
+) -> Tuple[bool, Optional[str], float, float]:
+    trade.update_price_extremes(bar_high)
+    bullish_day = bar_close >= bar_open
+    if bullish_day:
+        result = self._check_tp_price(trade, current_date, bar_high)
+        if result[0]: return result
+        result = self._check_sl_price(trade, current_date, bar_low)
+        if result[0]: return result
+    else:
+        result = self._check_sl_price(trade, current_date, bar_low)
+        if result[0]: return result
+        result = self._check_tp_price(trade, current_date, bar_high)
+        if result[0]: return result
+    holding_days = (current_date - trade.entry_time).days
+    if holding_days >= self.config.max_holding_days:
+        return True, f"time_limit_{self.config.max_holding_days}days", 1.0, bar_close
+    return False, None, 0.0, bar_close
+```
+
+#### `run_simple_backtest` 루프 수정
+
+```python
+# 수정 전
+current_price = ohlcv_data.iloc[i]["Close"]
+should_exit, exit_reason, volume_pct = backtester.check_exit_conditions(trade, current_date, current_price)
+if should_exit:
+    backtester.close_position(trade, current_date, current_price, exit_reason, volume_pct)
+
+# 수정 후
+bar = ohlcv_data.iloc[i]
+bar_open, bar_high, bar_low, bar_close = float(bar["Open"]), float(bar["High"]), float(bar["Low"]), float(bar["Close"])
+should_exit, exit_reason, volume_pct, exit_price = backtester.check_exit_conditions_ohlc(
+    trade, current_date, bar_open, bar_high, bar_low, bar_close)
+if should_exit:
+    backtester.close_position(trade, current_date, exit_price, exit_reason, volume_pct)
+```
+
+#### 강제 청산 개선
+
+```python
+# 수정 전: entry_price 사용 (실제 가격 반영 안 됨)
+last_price = trade.entry_price
+
+# 수정 후: 각 종목 실제 마지막 종가 사용
+last_prices = {code: float(data[data.index <= end_date].iloc[-1]["Close"]) for code, data in symbol_data.items()}
+last_price = last_prices.get(trade.code, trade.entry_price)
+```
+
+### 기대 효과
+
+- 페이퍼트레이딩과 동일한 진입 기준(65점) 적용 → 과거 수익 기록 재현 가능
+- 장중 손절/익절 시뮬레이션으로 종가 기준보다 현실적인 결과
+- 강제 청산 가격 정확도 향상

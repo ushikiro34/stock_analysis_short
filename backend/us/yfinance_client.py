@@ -265,8 +265,8 @@ async def get_us_fundamental(symbol: str) -> dict:
             "eps": float(eps),
             "bps": float(bps),
             "eps_growth": float(eps_growth),
-            "net_loss": float(eps) < 0,
-            "high_debt": float(debt_to_equity) > 300,
+            "net_loss": bool(float(eps) < 0),
+            "high_debt": bool(float(debt_to_equity) > 300),
         }
 
     try:

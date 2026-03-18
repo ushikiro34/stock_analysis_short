@@ -137,8 +137,8 @@ async def analyze_stock(code: str, market: str = "KR"):
         high52w = float(close.tail(252).max())
         low52w  = float(close.tail(252).min())
         high20d = float(close.tail(20).max())
-        is_52w_high = curr_price >= high52w * 0.999
-        is_20d_high = curr_price >= high20d * 0.999
+        is_52w_high = bool(curr_price >= high52w * 0.999)
+        is_20d_high = bool(curr_price >= high20d * 0.999)
 
         # 진입 신호
         mgr = SignalManager()

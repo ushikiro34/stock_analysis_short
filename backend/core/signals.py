@@ -119,7 +119,7 @@ class VolumeBreakoutSignal:
 
         # ── Case 1: 당일 급등 추격 방지 게이트 (≥5% 차단) ──────────────
         price_change_pct = (current_price - prev_close) / prev_close * 100 if prev_close > 0 else 0.0
-        chase_blocked = price_change_pct >= 5.0
+        chase_blocked = bool(price_change_pct >= 5.0)
 
         # 신호 강도 결정
         if chase_blocked:

@@ -183,8 +183,8 @@ class KISRestClient:
                 "eps": eps,
                 "bps": bps,
                 "eps_growth": 0,
-                "net_loss": eps < 0,
-                "high_debt": pbr > 3.0,
+                "net_loss": bool(eps < 0),
+                "high_debt": bool(pbr > 3.0),
             }
         except (ValueError, TypeError) as e:
             logger.error(f"[{code}] KIS fundamental parse error: {e}")

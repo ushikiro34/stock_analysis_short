@@ -1,4 +1,139 @@
-# 매매 전략 시스템 변경 이력 (최종 업데이트: 2026-03-15)
+# 매매 전략 시스템 변경 이력 (최종 업데이트: 2026-03-23)
+
+---
+
+## 이중 트랙 분석 엔진 (2026-03-23 추가)
+
+### 아키텍처 개요
+
+```
+[Track A] 급등주 스캐너 (기존 엔진 정제)      [Track B] 눌림목 스캐너 (신규)
+입력: 급등주 30종목                           입력: 관심종목 (localStorage watchlist)
+목적: 거래량 돌파/모멘텀 종목 포착             목적: 정배열 조정 중 진입 타이밍 포착
+신호: combined score ≥ 65 → BUY              신호: pullback score ≥ 55 → 눌림목 후보
+```
+
+---
+
+### Track A 개선 사항
+
+#### 1. 점수 정규화 (signals.py — SignalManager.generate_entry_signal)
+
+**변경 전**
+- 3개 클래스 (Volume 0.4 + Technical 0.4 + Pattern 0.2), score 캡 없음
+- PricePatternSignal 이론적 최대값 190점 → combined score 왜곡
+
+**변경 후**
+- 4개 클래스 포함, 각 클래스 `min(score, 100)` 캡 후 가중 합산
+
+| 클래스 | 가중치 |
+|---|---|
+| VolumeBreakoutSignal | 35% |
+| TechnicalBreakoutSignal | 30% |
+| PricePatternSignal | 20% |
+| MultiTFMomentumPlusSignal | 15% |
+
+- BUY 임계값 변경: 70점 → **65점** (HIGH), 50점 → **45점** (MEDIUM)
+
+#### 2. chase_blocked 게이트 위치 통일
+
+**변경 전**: VolumeBreakoutSignal 내부에서만 chase_blocked 계산 → 다른 클래스들 불필요하게 실행
+**변경 후**: SignalManager.generate_entry_signal() **최상단**에서 price_change_pct ≥ 5% 즉시 차단, 하위 클래스 호출 없음
+
+#### 3. Stochastic 모멘텀 보너스 (TechnicalBreakoutSignal)
+
+**추가 조건** (보너스 +10점):
+```python
+# 20 < %K < 70 AND %K > %D (극단 구간 제외 + 상승 방향)
+# 방향 중립 — "살아있는 돌파"와 "죽어있는 돌파" 구분
+```
+- 기존 "과매도 (%K < 20)" 조건 **사용하지 않음** (breakout 방향과 논리 모순)
+- 보너스 방식으로 적용 → 조건 없어도 신호 발생 가능
+
+---
+
+### Track B 신규 구현
+
+#### detect_pullback() 재설계 (signals.py — PricePatternSignal)
+
+**핵심 변경: Gate 3 제거 → Fibonacci 소프트 채점으로 교체**
+
+| 구분 | 변경 전 | 변경 후 |
+|---|---|---|
+| MA20 ±3% 초과 | 즉시 `False` 반환 (하드 게이트) | 점수 미부여, 계속 진행 |
+| Fibonacci 38.2/50% | 미구현 | 우선 채점 (+40~+50) |
+| MA20 지지 | 하드 게이트 통과 시 +25 | fallback 소프트 채점 (+25) |
+| RSI < 30 | 항상 `is_reversal_risk=True` | Fib 61.8% 근처이면 반등 기대 (+15) |
+| 하드 게이트 | MA20 ±3% | MA20 **10%** 이탈 + Fib 지지 없음 |
+
+**점수 체계**:
+```
+[하드 게이트 1] MA20 > MA60             → pass/fail
+[하드 게이트 2] 2~10일 조정 감지        → pass/fail
+[소프트 3] Fib 38.2/50% + MA20 수렴    → +50
+[소프트 3] Fib 38.2/50% 단독           → +40
+[소프트 3] MA20 단독 (fallback)         → +25
+[소프트 4] 조정 기간 거래량 감소         → +20
+[소프트 5] 당일 양봉                    → +10
+[소프트 5] 거래량 증가                  → +15
+[위험 보너스] Fib 61.8% + RSI < 30     → +15
+is_pullback = score ≥ 60 AND NOT is_reversal_risk
+```
+
+**피보나치 계산 기준**: 최근 60일 종가 고점/저점
+**반환 필드 추가**: `fib_levels: {"382": float, "500": float, "618": float}`
+
+#### 백엔드 엔드포인트 (signals.py 라우터)
+
+```
+POST /signals/pullback
+Body: { codes: string[], market: "KR"|"US", min_score: int }
+Returns: PullbackCandidate[] (score 내림차순)
+```
+
+**응답 필드**: `code, score, reasons, current_price, adjustment_days, fib_levels, is_reversal_risk, timestamp`
+
+#### 서비스 함수 (signal_service.py)
+
+```python
+async def scan_pullback_candidates(codes, market, min_score=60) -> List[Dict]:
+    # 70일 OHLCV fetch (Fibonacci 60일 + 버퍼)
+    # PricePatternSignal.detect_pullback() 호출
+    # semaphore(5) 병렬 처리
+    # score >= min_score AND is_pullback=True 필터링
+```
+
+#### 프론트엔드 UI (StocksDashboard.tsx)
+
+- 좌측 패널 상단 탭 추가: **급등주** | **눌림목**
+- 눌림목 탭 선택 시: watchlist 종목 자동 스캔 (`POST /signals/pullback`)
+- 결과 표시: 종목명, 코드, 조정일수, Fibonacci 레벨, score 배지
+- score 배지: ≥ 80 초록 / ≥ 65 노랑 / 그 외 회색
+- 재스캔 버튼 제공
+
+#### API 타입 (api.ts)
+
+```typescript
+interface PullbackCandidate {
+    code, market, score, reasons, current_price,
+    adjustment_days, fib_levels, is_reversal_risk, timestamp
+}
+export const scanPullback = (codes, market, min_score) => post('/signals/pullback', ...)
+```
+
+---
+
+### 변경된 파일 목록 (2026-03-23)
+
+| 파일 | 변경 내용 |
+|---|---|
+| `backend/core/signals.py` | chase_blocked 게이트 이동, Stochastic 보너스, detect_pullback Fibonacci 통합, 미사용 변수 제거 |
+| `backend/core/signal_service.py` | `scan_pullback_candidates()` 함수 추가 |
+| `backend/api/routers/signals.py` | `POST /signals/pullback` 엔드포인트 추가 |
+| `frontend/src/lib/api.ts` | `PullbackCandidate` 타입 + `scanPullback()` 함수 추가 |
+| `frontend/src/pages/StocksDashboard.tsx` | 좌측 탭 UI (급등주/눌림목), Track B 상태 관리 추가 |
+
+---
 
 ## 개요
 

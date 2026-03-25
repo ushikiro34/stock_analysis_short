@@ -100,3 +100,37 @@ class IndicatorEngine:
         import pandas as pd
         s = pd.Series(volumes) if not isinstance(volumes, pd.Series) else volumes
         return s.rolling(window=period).mean()
+
+    @staticmethod
+    def calculate_atr(high, low, close, period: int = 14):
+        """ATR (Average True Range) — 변동성 기반 동적 손절 계산용
+
+        True Range = max(High-Low, |High-PrevClose|, |Low-PrevClose|)
+        ATR = TR의 period일 단순이동평균
+
+        현업 트레이더 활용 예:
+            손절가 = 진입가 - ATR × 1.5  (변동성이 클수록 여유 손절)
+            목표가 = 진입가 + ATR × 3.0  (리스크:리워드 = 1:2)
+
+        Args:
+            high:   고가 시리즈
+            low:    저가 시리즈
+            close:  종가 시리즈
+            period: ATR 기간 (기본 14)
+
+        Returns:
+            pd.Series — ATR 값 (초기 period-1봉은 NaN)
+        """
+        import pandas as pd
+        high_s = pd.Series(high) if not isinstance(high, pd.Series) else high
+        low_s = pd.Series(low) if not isinstance(low, pd.Series) else low
+        close_s = pd.Series(close) if not isinstance(close, pd.Series) else close
+
+        prev_close = close_s.shift(1)
+        true_range = pd.concat([
+            high_s - low_s,
+            (high_s - prev_close).abs(),
+            (low_s - prev_close).abs(),
+        ], axis=1).max(axis=1)
+
+        return true_range.rolling(window=period).mean()

@@ -626,7 +626,7 @@ function App() {
                     <InvestmentJournalDashboard />
                 </div>
                 <div className={`h-full ${activeTab === 'watchlist' ? '' : 'hidden'}`}>
-                    <WatchlistDashboard market={market} />
+                    <WatchlistDashboard market={market} isVisible={activeTab === 'watchlist'} />
                 </div>
             </main>
 

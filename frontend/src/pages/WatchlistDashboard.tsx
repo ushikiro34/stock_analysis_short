@@ -13,6 +13,7 @@ interface WatchItem {
     code: string;
     market: Market;
     addedAt: string;
+    name?: string;  // StocksDashboard 에서 추가 시 종목명 포함
 }
 
 const STORAGE_KEY = 'watchlist_v1';
@@ -56,7 +57,7 @@ interface AnalysisRow extends WatchItem {
 
 const rowKey = (r: { code: string; market: string }) => `${r.code}-${r.market}`;
 
-export default function WatchlistDashboard({ market }: { market: Market }) {
+export default function WatchlistDashboard({ market, isVisible = false }: { market: Market; isVisible?: boolean }) {
     const [rows, setRows] = useState<AnalysisRow[]>([]);
     const [sortKey, setSortKey] = useState<SortKey>('code');
     const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -72,11 +73,25 @@ export default function WatchlistDashboard({ market }: { market: Market }) {
     // 마켓 변경 시 addMarket 동기화
     useEffect(() => { setAddMarket(market); }, [market]);
 
-    // 초기 로드
+    // 초기 로드 + 탭 전환 시 localStorage 재동기화
+    // (탭은 hidden CSS로 숨겨질 뿐 언마운트되지 않으므로 isVisible 변화 감지 필요)
     useEffect(() => {
+        if (!isVisible) return;
         const saved = loadWatchlist();
-        setRows(saved.map(w => ({ ...w, loading: false })));
-    }, []);
+        setRows(prev => {
+            // localStorage가 source of truth — 기존 분석 데이터(data)는 유지
+            const prevMap = new Map(prev.map(r => [`${r.code}-${r.market}`, r]));
+            return saved.map(w => {
+                const existing = prevMap.get(`${w.code}-${w.market}`);
+                return {
+                    ...w,                              // 최신 WatchItem 필드 (code, market, addedAt, name)
+                    loading: existing?.loading ?? false,
+                    data: existing?.data,
+                    error: existing?.error,
+                };
+            });
+        });
+    }, [isVisible]);
 
     // 분석 데이터 fetch
     const fetchAll = useCallback(async (items: WatchItem[]) => {

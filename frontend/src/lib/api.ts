@@ -329,6 +329,27 @@ export const scanSignals = (
 ): Promise<EntrySignal[]> =>
     get(`/signals/scan?market=${market}&strategy=${strategy}&min_score=${minScore}`);
 
+// ── Track B: 눌림목 스캐너 ────────────────────────────────────
+
+export interface PullbackCandidate {
+    code: string;
+    market: string;
+    score: number;
+    reasons: string[];
+    current_price: number;
+    adjustment_days: number;
+    fib_levels: Record<string, number>;
+    is_reversal_risk: boolean;
+    timestamp: string;
+}
+
+export const scanPullback = (
+    codes: string[],
+    market: Market,
+    min_score = 60,
+): Promise<PullbackCandidate[]> =>
+    post('/signals/pullback', { codes, market, min_score });
+
 // ── Backtest ──────────────────────────────────────────────────
 
 export const runBacktest = (req: BacktestRequest): Promise<BacktestResult> =>

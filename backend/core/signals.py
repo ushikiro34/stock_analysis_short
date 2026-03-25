@@ -235,6 +235,22 @@ class TechnicalBreakoutSignal:
                 reasons.append("볼린저밴드 하단 반등")
                 score += 20
 
+        # 조건 5: 스토캐스틱 모멘텀 방향 확인 (보너스 +10)
+        # 과매도 탈출 여부가 아닌 "모멘텀이 살아있는 돌파"를 구분하는 용도
+        # %K > %D (상승 방향) AND 20 < %K < 70 (극단 구간 제외)
+        try:
+            stoch = IndicatorEngine.calculate_stochastic(highs, lows, closes)
+            stoch_k_series = stoch["k"].dropna()
+            stoch_d_series = stoch["d"].dropna()
+            if len(stoch_k_series) >= 2 and len(stoch_d_series) >= 1:
+                stoch_k = float(stoch_k_series.iloc[-1])
+                stoch_d = float(stoch_d_series.iloc[-1])
+                if 20 < stoch_k < 70 and stoch_k > stoch_d:
+                    reasons.append(f"스토캐스틱 상승 모멘텀 (%K {stoch_k:.1f} > %D {stoch_d:.1f})")
+                    score += 10
+        except Exception:
+            pass
+
         # 신호 강도 결정
         if score >= 70:
             strength = SignalStrength.HIGH
@@ -324,12 +340,10 @@ class RSIGoldenCrossSignal:
 
             # 골든크로스 발생 시점 확인 (최근 20일 이내)
             if len(ma50) > 20 and len(ma200) > 20:
-                recent_golden_cross = False
                 for i in range(1, min(21, len(ma50))):
                     if ma50.iloc[-i] > ma200.iloc[-i] and ma50.iloc[-i-1] <= ma200.iloc[-i-1]:
                         reasons.append(f"최근 골든크로스 발생 ({i}일 전)")
                         score += 10
-                        recent_golden_cross = True
                         break
         else:
             reasons.append("골든크로스 미발생 (MA50 < MA200)")
@@ -357,7 +371,6 @@ class RSIGoldenCrossSignal:
 
         # RSI가 30을 상향 돌파했는지 확인 (최근 5일 이내)
         rsi_breakout = False
-        rsi_breakout_days = 0
 
         for i in range(1, min(6, len(rsi))):
             prev_rsi = rsi.iloc[-i]
@@ -366,7 +379,6 @@ class RSIGoldenCrossSignal:
             # RSI가 30 아래에서 30 위로 돌파
             if prev_prev_rsi is not None and prev_prev_rsi <= 30 and prev_rsi > 30:
                 rsi_breakout = True
-                rsi_breakout_days = i
                 reasons.append(f"RSI 30 상향 돌파 ({i}일 전, 현재 RSI: {current_rsi:.1f})")
                 score += 30
                 break
@@ -452,21 +464,33 @@ class PricePatternSignal:
 
     def detect_pullback(self, ohlcv_data: pd.DataFrame) -> Dict:
         """
-        눌림목(Pullback) 패턴 감지
+        눌림목(Pullback) 패턴 감지 — Fibonacci + MA20 소프트 채점 통합
 
-        조건:
-        1. 상승 추세 확인 (MA20 > MA60)
-        2. 일시적 조정 (최근 2일~10일 하락, 최대 2주)
-        3. 지지선 터치 (20일선 ±3% 이내)
-        4. 거래량 감소 (조정 기간 평균 거래량 < 이전 평균)
-        5. 반등 신호 (당일 양봉 + 거래량 증가)
+        하드 게이트:
+            1. MA20 > MA60 (상승 추세 필수)
+            2. 조정 기간 감지 (2~10일 중 60% 이상 하락일)
+
+        소프트 채점 (Phase 2 통합):
+            3. 지지 구간 접촉: Fibonacci 38.2/50% 우선, MA20 fallback
+               - near_fib + near_ma20 동시: +50 (강한 지지 수렴)
+               - near_fib 단독:             +40 (피보나치 지지)
+               - near_ma20 단독:            +25 (MA20 지지 fallback)
+               - 둘 다 없음:               점수 미부여 (패턴 제외 안 함)
+            4. 조정 거래량 감소: +20
+            5. 반등 신호 (양봉 + 거래량 증가): +25
+            6. 추세전환 위험 플래그 (이전 저점 하회)
+
+        RSI < 30 처리 (Phase 2 수정):
+            - 피보나치 61.8% 근처이면 반등 기대로 재해석 (+15)
+            - 피보나치 지지 없으면 기존대로 위험 플래그
 
         Returns:
             {
                 "is_pullback": bool,
                 "score": int,
                 "reasons": list,
-                "is_reversal_risk": bool  # 추세전환 위험 여부
+                "is_reversal_risk": bool,
+                "fib_levels": dict  # 계산된 피보나치 레벨
             }
         """
         if len(ohlcv_data) < 60:
@@ -474,117 +498,149 @@ class PricePatternSignal:
 
         closes = ohlcv_data["Close"]
         volumes = ohlcv_data["Volume"]
-        highs = ohlcv_data["High"]
-        lows = ohlcv_data["Low"]
 
         current = ohlcv_data.iloc[-1]
-        current_price = current["Close"]
-        current_volume = current["Volume"]
+        current_price = float(current["Close"])
+        current_volume = float(current["Volume"])
 
         reasons = []
         score = 0
         is_reversal_risk = False
 
-        # 1. 상승 추세 확인
+        # ── 하드 게이트 1: 상승 추세 (MA20 > MA60) ─────────────────────────
         ma20 = IndicatorEngine.calculate_ma(closes, 20)
         ma60 = IndicatorEngine.calculate_ma(closes, 60)
 
         if len(ma20) == 0 or len(ma60) == 0:
             return {"is_pullback": False, "score": 0, "reasons": [], "is_reversal_risk": False}
 
-        current_ma20 = ma20.iloc[-1]
-        current_ma60 = ma60.iloc[-1]
+        current_ma20 = float(ma20.iloc[-1])
+        current_ma60 = float(ma60.iloc[-1])
 
         if current_ma20 <= current_ma60:
-            # 추세전환 위험: MA20이 MA60 아래로
-            is_reversal_risk = True
-            return {"is_pullback": False, "score": 0, "reasons": ["MA20 < MA60: 추세전환 위험"], "is_reversal_risk": True}
+            return {
+                "is_pullback": False, "score": 0,
+                "reasons": ["MA20 < MA60: 상승 추세 미형성"],
+                "is_reversal_risk": True,
+            }
 
         reasons.append("상승 추세 유지 (MA20 > MA60)")
         score += 20
 
-        # 2. 조정 기간 감지 (2일 ~ 10일, 최대 2주)
+        # ── 하드 게이트 2: 조정 기간 감지 (2~10일) ──────────────────────────
         adjustment_detected = False
         adjustment_days = 0
 
-        for lookback in range(2, 11):  # 2일 ~ 10일
+        for lookback in range(2, 11):
             if len(closes) < lookback + 1:
                 continue
-
             recent_closes = closes.tail(lookback + 1)
-            declining_days = 0
-
-            for i in range(1, len(recent_closes)):
-                if recent_closes.iloc[i] < recent_closes.iloc[i-1]:
-                    declining_days += 1
-
-            # 기간 중 60% 이상 하락일
+            declining_days = sum(
+                1 for i in range(1, len(recent_closes))
+                if recent_closes.iloc[i] < recent_closes.iloc[i - 1]
+            )
             if declining_days >= lookback * 0.6:
                 adjustment_detected = True
                 adjustment_days = lookback
                 break
 
         if not adjustment_detected:
-            return {"is_pullback": False, "score": 0, "reasons": ["조정 패턴 없음"], "is_reversal_risk": False}
+            return {
+                "is_pullback": False, "score": 0,
+                "reasons": ["조정 패턴 없음"],
+                "is_reversal_risk": False,
+            }
 
         reasons.append(f"{adjustment_days}일 조정 기간 감지")
         score += 15
 
-        # 3. 지지선 터치 확인 (20일선 ±3% 이내)
-        distance_from_ma20 = abs(current_price - current_ma20) / current_ma20
+        # ── Phase 2: 피보나치 레벨 계산 (최근 60일 스윙 고/저점 기준) ─────
+        fib_window = closes.tail(60)
+        fib_high = float(fib_window.max())
+        fib_low = float(fib_window.min())
+        fib_range = fib_high - fib_low
+        fib_levels = {}
 
-        if distance_from_ma20 > 0.03:
-            # 지지선에서 멀리 떨어짐
-            if current_price < current_ma20 * 0.95:
-                # MA20을 5% 이상 이탈 -> 추세전환 위험
-                is_reversal_risk = True
-                return {"is_pullback": False, "score": 0, "reasons": ["MA20 5% 이상 이탈: 추세전환 위험"], "is_reversal_risk": True}
-            return {"is_pullback": False, "score": 0, "reasons": ["지지선 터치 없음"], "is_reversal_risk": False}
+        if fib_range > 0:
+            fib_levels = {
+                "382": fib_high - fib_range * 0.382,
+                "500": fib_high - fib_range * 0.500,
+                "618": fib_high - fib_range * 0.618,
+            }
 
-        reasons.append(f"MA20 지지선 터치 (거리: {distance_from_ma20*100:.1f}%)")
-        score += 25
+        # ── 소프트 채점 3: 지지 구간 접촉 (Fib 우선, MA20 fallback) ─────────
+        PROXIMITY = 0.03  # ±3% 이내를 "터치"로 판단
 
-        # 4. 조정 기간 거래량 감소 확인
-        adjustment_period = ohlcv_data.tail(adjustment_days + 1).head(adjustment_days)
+        near_fib382 = fib_levels and abs(current_price - fib_levels["382"]) / current_price < PROXIMITY
+        near_fib500 = fib_levels and abs(current_price - fib_levels["500"]) / current_price < PROXIMITY
+        near_fib = near_fib382 or near_fib500
+        near_ma20 = abs(current_price - current_ma20) / current_ma20 < PROXIMITY
+
+        # MA20 10% 이상 이탈 시 추세전환 위험 (유일하게 남겨둔 하드 체크)
+        if current_price < current_ma20 * 0.90 and not near_fib:
+            return {
+                "is_pullback": False, "score": 0,
+                "reasons": ["MA20 10% 이상 이탈 + 피보나치 지지 없음: 추세전환 위험"],
+                "is_reversal_risk": True,
+                "fib_levels": fib_levels,
+            }
+
+        if near_fib and near_ma20:
+            fib_label = "38.2%" if near_fib382 else "50.0%"
+            reasons.append(f"피보나치 {fib_label} + MA20 지지 수렴 (강한 지지)")
+            score += 50
+        elif near_fib:
+            fib_label = "38.2%" if near_fib382 else "50.0%"
+            reasons.append(f"피보나치 {fib_label} 지지 구간 접촉")
+            score += 40
+        elif near_ma20:
+            dist = abs(current_price - current_ma20) / current_ma20 * 100
+            reasons.append(f"MA20 지지선 터치 (거리: {dist:.1f}%)")
+            score += 25
+
+        # ── 소프트 채점 4: 조정 기간 거래량 감소 ────────────────────────────
+        adj_period = ohlcv_data.tail(adjustment_days + 1).head(adjustment_days)
         before_period = ohlcv_data.tail(adjustment_days * 2 + 1).head(adjustment_days)
+        adj_avg_vol = float(adj_period["Volume"].mean())
+        before_avg_vol = float(before_period["Volume"].mean())
 
-        adjustment_avg_volume = adjustment_period["Volume"].mean()
-        before_avg_volume = before_period["Volume"].mean()
-
-        if adjustment_avg_volume < before_avg_volume:
-            reasons.append(f"조정 기간 거래량 감소 ({adjustment_avg_volume/before_avg_volume:.2f}배)")
+        if before_avg_vol > 0 and adj_avg_vol < before_avg_vol:
+            reasons.append(f"조정 기간 거래량 감소 ({adj_avg_vol / before_avg_vol:.2f}배)")
             score += 20
 
-        # 5. 반등 신호 확인
-        prev_close = closes.iloc[-2]
-        is_bullish_candle = current_price > ohlcv_data.iloc[-1]["Open"]
-
+        # ── 소프트 채점 5: 반등 신호 (양봉 + 거래량 증가) ──────────────────
+        is_bullish_candle = current_price > float(current["Open"])
         if is_bullish_candle:
             reasons.append("당일 양봉")
             score += 10
 
-        # 거래량 증가
-        prev_volume = volumes.iloc[-2]
+        prev_volume = float(volumes.iloc[-2])
         if current_volume > prev_volume:
-            reasons.append(f"거래량 증가 ({current_volume/prev_volume:.2f}배)")
+            reasons.append(f"거래량 증가 ({current_volume / prev_volume:.2f}배)")
             score += 15
 
-        # 6. 추세전환 위험 추가 체크
-        # - 이전 저점 하회 시
-        recent_period = ohlcv_data.tail(20)
-        prev_low = recent_period["Low"].iloc[:-1].min()
-
-        if current_price < prev_low:
+        # ── 추세전환 위험 체크 ───────────────────────────────────────────────
+        # 이전 저점 하회
+        recent_low = float(ohlcv_data.tail(20)["Low"].iloc[:-1].min())
+        if current_price < recent_low:
             is_reversal_risk = True
             reasons.append("⚠️ 이전 저점 하회: 추세전환 위험")
 
-        # - RSI 과매도 구간 (30 미만)
+        # RSI < 30 처리 — 피보나치 61.8% 근처이면 반등 기대로 재해석
         rsi = IndicatorEngine.calculate_rsi(closes, 14)
         if len(rsi) > 0:
-            current_rsi = rsi.iloc[-1]
+            current_rsi = float(rsi.iloc[-1])
             if current_rsi < 30:
-                is_reversal_risk = True
-                reasons.append(f"⚠️ RSI 과매도 ({current_rsi:.1f}): 추세전환 위험")
+                near_fib618 = (
+                    fib_levels and
+                    abs(current_price - fib_levels["618"]) / current_price < PROXIMITY
+                )
+                if near_fib618:
+                    reasons.append(f"피보나치 61.8% + RSI 극과매도 ({current_rsi:.1f}) → 강한 반등 기대")
+                    score += 15
+                else:
+                    is_reversal_risk = True
+                    reasons.append(f"⚠️ RSI 과매도 ({current_rsi:.1f}): 추세전환 위험")
 
         is_pullback = score >= 60 and not is_reversal_risk
 
@@ -593,7 +649,8 @@ class PricePatternSignal:
             "score": score,
             "reasons": reasons,
             "is_reversal_risk": is_reversal_risk,
-            "adjustment_days": adjustment_days
+            "adjustment_days": adjustment_days,
+            "fib_levels": fib_levels,
         }
 
     def detect_consolidation_breakout(self, ohlcv_data: pd.DataFrame, consolidation_days: int = 5) -> bool:
@@ -909,7 +966,7 @@ class TakeProfitStrategy:
         ]
         self.executed_targets = set()
 
-    def check_exit(self, current_price: float, position_size: float) -> Tuple[bool, Optional[Dict]]:
+    def check_exit(self, current_price: float, position_size: float = 1.0) -> Tuple[bool, Optional[Dict]]:
         """
         익절 조건 체크
 
@@ -940,22 +997,51 @@ class TakeProfitStrategy:
 
 
 class StopLossStrategy:
-    """손절 전략"""
+    """손절 전략 — 고정/트레일링/ATR 동적 손절 지원"""
 
     def __init__(self, entry_price: float, stop_loss_ratio: float = -0.02,
-                 trailing_stop: bool = True, trailing_ratio: float = -0.03):
+                 trailing_stop: bool = True, trailing_ratio: float = -0.03,
+                 atr: Optional[float] = None, atr_multiplier: Optional[float] = None,
+                 max_loss_ratio: float = 0.08):
         """
         Args:
-            entry_price: 진입 가격
+            entry_price:     진입 가격
             stop_loss_ratio: 고정 손절 비율 (예: -0.02 = -2%)
-            trailing_stop: 트레일링 스톱 사용 여부
-            trailing_ratio: 트레일링 스톱 비율 (최고가 대비)
+            trailing_stop:   트레일링 스톱 사용 여부
+            trailing_ratio:  트레일링 스톱 비율 (최고가 대비)
+            atr:             ATR 값 (IndicatorEngine.calculate_atr 결과)
+                             None이면 ATR 손절 비활성화
+            atr_multiplier:  ATR 배수 (None=자동, 명시 시 고정 사용)
+                             자동 결정 기준: ATR% < 2% → 1.2, 2~4% → 1.5, > 4% → 2.0
+            max_loss_ratio:  최대 손실 허용 비율 (ATR 손절가 하한선, 기본 8%)
+                             hard floor = entry_price × (1 - max_loss_ratio)
         """
         self.entry_price = entry_price
         self.stop_loss_ratio = stop_loss_ratio
         self.trailing_stop = trailing_stop
         self.trailing_ratio = trailing_ratio
         self.highest_price = entry_price
+        self.atr = atr
+
+        # ATR% 기반 배수 자동 결정 (명시적 배수 없을 때)
+        if atr and atr > 0 and entry_price > 0:
+            if atr_multiplier is None:
+                atr_pct = atr / entry_price
+                if atr_pct < 0.02:
+                    atr_multiplier = 1.2   # 안정적 종목 — 타이트한 손절
+                elif atr_pct < 0.04:
+                    atr_multiplier = 1.5   # 표준
+                else:
+                    atr_multiplier = 2.0   # 고변동 종목 — 넓은 손절 여유
+            self.atr_multiplier = atr_multiplier
+
+            raw_stop = entry_price - atr * atr_multiplier
+            hard_floor = entry_price * (1 - max_loss_ratio)
+            # hard floor: ATR 손절가가 최대 허용 손실보다 깊으면 hard floor 로 제한
+            self.atr_stop_price = max(raw_stop, hard_floor)
+        else:
+            self.atr_multiplier = atr_multiplier or 1.5
+            self.atr_stop_price = None
 
     def update_highest_price(self, current_price: float):
         """최고가 업데이트"""
@@ -966,10 +1052,22 @@ class StopLossStrategy:
         """
         손절 조건 체크
 
+        우선순위: ATR 동적 손절 → 고정 손절 → 트레일링 스톱
+
         Returns:
             (should_exit, exit_info)
         """
         self.update_highest_price(current_price)
+
+        # 0. ATR 기반 동적 손절 (변동성 반영, 고정 손절보다 우선)
+        if self.atr_stop_price is not None and current_price <= self.atr_stop_price:
+            return True, {
+                "reason": "atr_stop_loss",
+                "atr": round(self.atr, 0),
+                "atr_multiplier": self.atr_multiplier,
+                "stop_price": round(self.atr_stop_price, 0),
+                "loss_ratio": (current_price - self.entry_price) / self.entry_price,
+            }
 
         # 1. 고정 손절
         loss_ratio = (current_price - self.entry_price) / self.entry_price
@@ -1502,6 +1600,201 @@ class MinuteBreakoutSignal:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 수급 분석 신호 (현업 트레이더 방식 추가)
+# ═══════════════════════════════════════════════════════════════
+
+class InstitutionalSupplySignal:
+    """기관/외국인 순매수 수급 분석 — Track A combined 보너스 채점
+
+    pykrx get_market_trading_volume_by_date 결과를 받아
+    기관·외국인 연속 순매수 여부를 채점한다.
+
+    채점 기준:
+        기관 4일 이상 연속 순매수:   +10
+        기관 2~3일 순매수:          +5
+        외국인 4일 이상 연속 순매수: +10
+        외국인 2~3일 순매수:        +5
+        최대 보너스:                +15 (캡)
+
+    현업과의 차이:
+        현업 — 체결강도, 프로그램 매매, 공매도 잔고까지 통합
+        현재 — 순매수 방향성만 확인 (일봉 배치 한계)
+    """
+
+    def check_signal(self, investor_data: Optional[pd.DataFrame]) -> Dict:
+        """
+        Args:
+            investor_data: pykrx get_market_trading_volume_by_date 결과
+                           MultiIndex 컬럼 (거래유형, 투자자유형) 또는 None
+
+        Returns:
+            {
+                "score": 0~15 (보너스 점수),
+                "reasons": [...],
+                "available": bool,
+                "institutional_net": float,  # 5일 합계
+                "foreign_net": float,
+            }
+        """
+        if investor_data is None or investor_data.empty:
+            return {"score": 0, "reasons": [], "available": False,
+                    "institutional_net": 0, "foreign_net": 0}
+
+        score = 0
+        reasons = []
+        inst_net_total = 0.0
+        foreign_net_total = 0.0
+
+        try:
+            # MultiIndex: (거래유형, 투자자유형) → 순매수 슬라이스
+            if isinstance(investor_data.columns, pd.MultiIndex):
+                try:
+                    net_df = investor_data.xs("순매수", axis=1, level=0)
+                except KeyError:
+                    # level 순서가 반대인 경우
+                    net_df = investor_data.xs("순매수", axis=1, level=1)
+            else:
+                net_df = investor_data  # 이미 순매수 컬럼만 있는 경우 fallback
+
+            inst_col = next((c for c in net_df.columns if "기관" in str(c)), None)
+            foreign_col = next((c for c in net_df.columns if "외국인" in str(c)), None)
+
+            if inst_col is not None and len(net_df) >= 1:
+                recent_inst = net_df[inst_col].tail(5)
+                inst_net_total = float(recent_inst.sum())
+                inst_pos = int((recent_inst > 0).sum())  # 5일 중 순매수 일수 (연속이 아닌 일수 합계)
+                if inst_pos >= 4:
+                    reasons.append(f"기관 순매수 우세 (5일 중 {inst_pos}일)")
+                    score += 10
+                elif inst_pos >= 2:
+                    reasons.append(f"기관 순매수 (5일 중 {inst_pos}일)")
+                    score += 5
+                elif inst_pos == 0:
+                    # 5일 전체 순매도 → 강한 매도 압력 패널티
+                    reasons.append("기관 5일 전체 순매도 — 매도 압력")
+                    score -= 7
+                elif inst_pos == 1:
+                    reasons.append(f"기관 순매도 우세 (5일 중 {5 - inst_pos}일 순매도)")
+                    score -= 3
+
+            if foreign_col is not None and len(net_df) >= 1:
+                recent_foreign = net_df[foreign_col].tail(5)
+                foreign_net_total = float(recent_foreign.sum())
+                foreign_pos = int((recent_foreign > 0).sum())
+                if foreign_pos >= 4:
+                    reasons.append(f"외국인 순매수 우세 (5일 중 {foreign_pos}일)")
+                    score += 10
+                elif foreign_pos >= 2:
+                    reasons.append(f"외국인 순매수 (5일 중 {foreign_pos}일)")
+                    score += 5
+                elif foreign_pos == 0:
+                    reasons.append("외국인 5일 전체 순매도 — 이탈 압력")
+                    score -= 7
+                elif foreign_pos == 1:
+                    reasons.append(f"외국인 순매도 우세 (5일 중 {5 - foreign_pos}일 순매도)")
+                    score -= 3
+
+        except Exception as e:
+            logger.debug(f"InstitutionalSupplySignal 계산 실패: {e}")
+            return {"score": 0, "reasons": [], "available": False,
+                    "institutional_net": 0, "foreign_net": 0}
+
+        return {
+            "score": max(-14, min(score, 15)),  # 패널티 포함: -14 ~ +15
+            "reasons": reasons,
+            "available": True,
+            "institutional_net": inst_net_total,
+            "foreign_net": foreign_net_total,
+        }
+
+
+class SectorMomentumSignal:
+    """KRX 섹터 지수 모멘텀 분석 — Track A combined 보너스 채점
+
+    종목이 속한 업종 지수의 5일 수익률을 KOSPI와 비교하여
+    섹터 강세 여부를 보너스 점수로 반영한다.
+
+    채점 기준 (시장 대비 상대 수익률):
+        섹터 +3% 이상 아웃퍼폼:  +10
+        섹터 +1~3% 아웃퍼폼:    +5
+        섹터 -2% 이상 언더퍼폼:  -5 (패널티)
+        섹터 데이터 없음:         0 (보너스 없음, 패널티도 없음)
+
+    현업과의 차이:
+        현업 — 섹터 로테이션 실시간 모니터링, 자금 유입/유출 포착
+        현재 — 5일 상대 수익률만 비교 (일봉 배치 한계)
+    """
+
+    def check_signal(self, sector_ohlcv: Optional[pd.DataFrame],
+                     market_ohlcv: Optional[pd.DataFrame]) -> Dict:
+        """
+        Args:
+            sector_ohlcv:  업종 지수 OHLCV (pykrx get_index_ohlcv_by_date 결과, 컬럼 영문)
+                           None이면 보너스 0점
+            market_ohlcv:  KOSPI 지수 OHLCV (비교 기준)
+                           None이면 절대 수익률만 사용
+
+        Returns:
+            {
+                "score": -5 ~ +10 (패널티 포함 보너스),
+                "reasons": [...],
+                "available": bool,
+                "sector_5d_pct": float,
+                "relative_vs_market": float | None,
+            }
+        """
+        if sector_ohlcv is None or sector_ohlcv.empty or len(sector_ohlcv) < 5:
+            return {"score": 0, "reasons": [], "available": False,
+                    "sector_5d_pct": 0.0, "relative_vs_market": None}
+
+        score = 0
+        reasons = []
+
+        try:
+            close_col = "Close" if "Close" in sector_ohlcv.columns else sector_ohlcv.columns[3]
+            s_close = sector_ohlcv[close_col]
+            sector_5d = (float(s_close.iloc[-1]) - float(s_close.iloc[-5])) / float(s_close.iloc[-5]) * 100
+
+            relative = None
+            if market_ohlcv is not None and not market_ohlcv.empty and len(market_ohlcv) >= 5:
+                m_close_col = "Close" if "Close" in market_ohlcv.columns else market_ohlcv.columns[3]
+                m_close = market_ohlcv[m_close_col]
+                market_5d = (float(m_close.iloc[-1]) - float(m_close.iloc[-5])) / float(m_close.iloc[-5]) * 100
+                relative = sector_5d - market_5d
+
+                if relative >= 3.0:
+                    reasons.append(f"섹터 강세 (KOSPI 대비 +{relative:.1f}%, 5일)")
+                    score += 10
+                elif relative >= 1.0:
+                    reasons.append(f"섹터 소폭 강세 (KOSPI 대비 +{relative:.1f}%, 5일)")
+                    score += 5
+                elif relative <= -2.0:
+                    reasons.append(f"섹터 약세 (KOSPI 대비 {relative:.1f}%, 5일) — 진입 주의")
+                    score -= 5
+            else:
+                # 시장 데이터 없으면 절대 수익률 기준
+                if sector_5d >= 3.0:
+                    reasons.append(f"섹터 상승세 (+{sector_5d:.1f}%, 5일)")
+                    score += 10
+                elif sector_5d >= 1.0:
+                    reasons.append(f"섹터 소폭 상승 (+{sector_5d:.1f}%, 5일)")
+                    score += 5
+
+        except Exception as e:
+            logger.debug(f"SectorMomentumSignal 계산 실패: {e}")
+            return {"score": 0, "reasons": [], "available": False,
+                    "sector_5d_pct": 0.0, "relative_vs_market": None}
+
+        return {
+            "score": score,
+            "reasons": reasons,
+            "available": True,
+            "sector_5d_pct": round(sector_5d, 2),
+            "relative_vs_market": round(relative, 2) if relative is not None else None,
+        }
+
+
+# ═══════════════════════════════════════════════════════════════
 # 통합 신호 매니저
 # ═══════════════════════════════════════════════════════════════
 
@@ -1515,15 +1808,23 @@ class SignalManager:
         self.rsi_golden_cross_signal = RSIGoldenCrossSignal()
         self.weekly_rsi_swing_signal = WeeklyRSISwingSignal()
         self.multi_tf_momentum_plus_signal = MultiTFMomentumPlusSignal()
+        self.institutional_supply_signal = InstitutionalSupplySignal()
+        self.sector_momentum_signal = SectorMomentumSignal()
 
-    def generate_entry_signal(self, ohlcv_data: pd.DataFrame, strategy: str = "combined") -> Dict:
+    def generate_entry_signal(self, ohlcv_data: pd.DataFrame, strategy: str = "combined",
+                              investor_data: Optional[pd.DataFrame] = None,
+                              sector_data: Optional[Dict] = None) -> Dict:
         """
         진입 신호 생성
 
         Args:
-            ohlcv_data: OHLCV 데이터
-            strategy: "volume" | "technical" | "pattern" | "rsi_golden_cross" |
-                      "weekly_rsi_swing" | "multi_tf_momentum_plus" | "combined"
+            ohlcv_data:    OHLCV 데이터
+            strategy:      "volume" | "technical" | "pattern" | "rsi_golden_cross" |
+                           "weekly_rsi_swing" | "multi_tf_momentum_plus" | "combined"
+            investor_data: pykrx 투자자별 거래량 DataFrame (combined + KR만 사용)
+                           None이면 수급 보너스 생략
+            sector_data:   {"sector_ohlcv": DataFrame|None, "market_ohlcv": DataFrame|None}
+                           None이면 섹터 보너스 생략
 
         Returns:
             종합 신호 정보
@@ -1541,45 +1842,94 @@ class SignalManager:
         elif strategy == "multi_tf_momentum_plus":
             return self.multi_tf_momentum_plus_signal.check_signal(ohlcv_data)
         else:  # combined
-            volume_result = self.volume_signal.check_signal(ohlcv_data)
-            technical_result = self.technical_signal.check_signal(ohlcv_data)
-            pattern_result = self.pattern_signal.check_signal(ohlcv_data)
+            # ── Step 1: 추격차단 게이트 (SignalManager 최상단) ──────────────
+            # VolumeBreakoutSignal 내부 chase_blocked 보다 먼저 실행
+            # → 모든 하위 클래스 호출 전에 차단하여 불필요한 계산 방지
+            chase_blocked = False
+            chase_reason = ""
+            if len(ohlcv_data) >= 2:
+                curr_p = float(ohlcv_data["Close"].iloc[-1])
+                prev_p = float(ohlcv_data["Close"].iloc[-2])
+                if prev_p > 0:
+                    pct = (curr_p - prev_p) / prev_p * 100
+                    if pct >= 5.0:
+                        chase_blocked = True
+                        chase_reason = f"[추격차단] 당일 +{pct:.1f}% 급등 (≥5%, 고점 진입 위험)"
 
-            # Case 1 전파: 거래량 신호에서 추격차단이 발동되면 combined도 즉시 HOLD
-            if volume_result.get("chase_blocked", False):
-                chase_reason = next(
-                    (r for r in volume_result["reasons"] if "추격차단" in r), ""
-                )
+            if chase_blocked:
                 return {
                     "signal": SignalType.HOLD,
                     "strength": SignalStrength.LOW,
                     "score": 0,
-                    "reasons": [chase_reason] + volume_result["reasons"],
-                    "breakdown": {
-                        "volume": volume_result,
-                        "technical": technical_result,
-                        "pattern": pattern_result,
-                    },
+                    "reasons": [chase_reason],
+                    "chase_blocked": True,
+                    "breakdown": {},
                 }
 
-            # 종합 점수 (가중 평균)
+            # ── Step 2: 하위 신호 클래스 실행 ───────────────────────────────
+            volume_result = self.volume_signal.check_signal(ohlcv_data)
+            technical_result = self.technical_signal.check_signal(ohlcv_data)
+            pattern_result = self.pattern_signal.check_signal(ohlcv_data)
+            mtf_result = self.multi_tf_momentum_plus_signal.check_signal(ohlcv_data)
+
+            # ── Step 3: 각 클래스 점수 100점 캡 적용 ────────────────────────
+            # 이론적 최대값이 100을 초과하는 클래스(PricePattern 등) 정규화
+            v_score = min(volume_result["score"], 100)
+            t_score = min(technical_result["score"], 100)
+            p_score = min(pattern_result["score"], 100)
+            m_score = min(mtf_result["score"], 100)
+
+            # ── Step 4: 가중 합산 (4클래스, 합계 1.0) ───────────────────────
+            # Volume 35% / Technical 30% / Pattern 20% / MultiTFMomentum 15%
             total_score = (
-                volume_result["score"] * 0.4 +
-                technical_result["score"] * 0.4 +
-                pattern_result["score"] * 0.2
+                v_score * 0.35 +
+                t_score * 0.30 +
+                p_score * 0.20 +
+                m_score * 0.15
             )
 
             all_reasons = (
                 volume_result["reasons"] +
                 technical_result["reasons"] +
-                pattern_result["reasons"]
+                pattern_result["reasons"] +
+                mtf_result["reasons"]
             )
 
-            # 신호 강도
-            if total_score >= 70:
+            # ── Step 5: 수급·섹터 보너스 (기관/외국인 + 업종 모멘텀) ──────────
+            # 항상 계산 (breakdown 포함을 위해) — 단, 기술적 base가 부족하면 적용 차단
+            supply_result = self.institutional_supply_signal.check_signal(investor_data)
+            sector_ohlcv = sector_data.get("sector_ohlcv") if sector_data else None
+            market_ohlcv = sector_data.get("market_ohlcv") if sector_data else None
+            sector_result = self.sector_momentum_signal.check_signal(sector_ohlcv, market_ohlcv)
+
+            base_score = total_score  # 보너스 적용 전 순수 기술적 점수 기록
+
+            # ── Fix 5 게이트: base score < 40이면 보너스 적용 차단 ────────────
+            # 기술적 구조가 미달인 종목은 수급·섹터가 좋아도 진입 금지
+            # (수급+섹터 최대 +25점으로 HOLD→BUY HIGH 단독 역전 방지)
+            if base_score >= 40:
+                if supply_result["available"]:
+                    total_score = max(0.0, min(100.0, total_score + supply_result["score"]))
+                    all_reasons = all_reasons + supply_result["reasons"]
+                if sector_result["available"]:
+                    total_score = max(0.0, min(100.0, total_score + sector_result["score"]))
+                    all_reasons = all_reasons + sector_result["reasons"]
+            else:
+                # base 미달: breakdown에는 포함하되 점수에는 반영하지 않음
+                if supply_result["reasons"] or sector_result["reasons"]:
+                    all_reasons = all_reasons + [
+                        "[기술적 구조 미달] 수급·섹터 보너스 비적용 (base < 40)"
+                    ]
+
+            # 신호 강도 — base score가 낮으면 수급 보너스와 무관하게 HOLD 유지
+            if base_score < 40:
+                # 기술적 구조 미달: 항상 HOLD
+                strength = SignalStrength.LOW
+                signal = SignalType.HOLD
+            elif total_score >= 65:
                 strength = SignalStrength.HIGH
                 signal = SignalType.BUY
-            elif total_score >= 50:
+            elif total_score >= 45:
                 strength = SignalStrength.MEDIUM
                 signal = SignalType.BUY
             else:
@@ -1589,18 +1939,23 @@ class SignalManager:
             return {
                 "signal": signal,
                 "strength": strength,
-                "score": total_score,
+                "score": round(total_score, 1),
+                "base_score": round(base_score, 1),  # 수급·섹터 보너스 전 순수 기술 점수
                 "reasons": all_reasons,
                 "breakdown": {
                     "volume": volume_result,
                     "technical": technical_result,
-                    "pattern": pattern_result
+                    "pattern": pattern_result,
+                    "momentum": mtf_result,
+                    "supply": supply_result,
+                    "sector": sector_result,
                 }
             }
 
     def generate_exit_signal(self, entry_price: float, entry_time: datetime,
                            current_price: float, current_time: datetime,
-                           position_size: float = 1.0) -> Dict:
+                           position_size: float = 1.0,
+                           atr: Optional[float] = None) -> Dict:
         """
         청산 신호 생성
 
@@ -1626,8 +1981,8 @@ class SignalManager:
                 "details": tp_info
             }
 
-        # 손절 체크
-        sl_strategy = StopLossStrategy(entry_price)
+        # 손절 체크 (ATR 제공 시 동적 손절, 없으면 고정 -2%)
+        sl_strategy = StopLossStrategy(entry_price, atr=atr)
         sl_should_exit, sl_info = sl_strategy.check_exit(current_price)
 
         if sl_should_exit:

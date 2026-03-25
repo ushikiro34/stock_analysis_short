@@ -170,7 +170,7 @@ async def analyze_stock(code: str, market: str = "KR"):
             "is_20d_high": is_20d_high,
             "signal": sig.get("signal", "HOLD"),
             "score":  sig.get("score", 0),
-            "chase_blocked": sig.get("details", {}).get("chase_blocked", False),
+            "chase_blocked": sig.get("chase_blocked", False),
             "signal_reasons": sig.get("reasons", []),
             "updated_at": datetime.now().isoformat(),
         }

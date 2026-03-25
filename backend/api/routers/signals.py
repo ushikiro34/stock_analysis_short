@@ -10,8 +10,11 @@ import logging
 from ...core.signal_service import (
     generate_entry_signal,
     generate_exit_signal,
-    scan_signals_from_surge_stocks
+    scan_signals_from_surge_stocks,
+    scan_pullback_candidates,
 )
+from pydantic import BaseModel
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +88,36 @@ async def scan_entry_signals(market: str = "KR", strategy: str = "combined", min
         logger.error(f"Signal scan error: {e}")
         if cache_key in _entry_signals_cache:
             return _entry_signals_cache[cache_key]["data"]
+        return []
+
+
+class PullbackScanRequest(BaseModel):
+    codes: List[str]
+    market: str = "KR"
+    min_score: int = 60
+
+
+@router.post("/pullback")
+async def scan_pullback(req: PullbackScanRequest):
+    """
+    Track B: 눌림목/반등 스캐너
+    관심종목 또는 지정 종목 코드 리스트에서 피보나치+MA20 기반 눌림목 후보 탐색
+
+    Args:
+        codes: 종목 코드 리스트
+        market: KR | US
+        min_score: 최소 점수 (기본 60)
+
+    Returns:
+        눌림목 후보 리스트 (score 내림차순)
+        [{ code, score, reasons, current_price, fib_levels, adjustment_days }, ...]
+    """
+    if not req.codes:
+        return []
+    try:
+        return await scan_pullback_candidates(req.codes, req.market, req.min_score)
+    except Exception as e:
+        logger.error(f"Pullback scan error: {e}")
         return []
 
 

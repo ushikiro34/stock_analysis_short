@@ -9,9 +9,11 @@ interface SurgeListProps {
     onManualSelect: (code: string) => void;
     loading: boolean;
     market: Market;
+    scoreMap?: Record<string, number>;
+    chMap?: Record<string, string>;
 }
 
-export default function SurgeList({ stocks, selectedCode, onSelect, onManualSelect, loading, market }: SurgeListProps) {
+export default function SurgeList({ stocks, selectedCode, onSelect, onManualSelect, loading, market, scoreMap = {}, chMap = {} }: SurgeListProps) {
     const [manualCode, setManualCode] = useState('');
 
     const formatVolume = (v: number) => {
@@ -68,38 +70,63 @@ export default function SurgeList({ stocks, selectedCode, onSelect, onManualSele
                 </div>
             ) : (
                 <div className="space-y-1">
-                    {stocks.map((stock, idx) => (
-                        <button
-                            key={stock.code}
-                            onClick={() => onSelect(stock.code)}
-                            className={`w-full text-left px-3 py-2.5 rounded-lg transition-all ${
-                                selectedCode === stock.code
-                                    ? 'bg-primary/20 border border-primary/40'
-                                    : 'hover:bg-slate-800/60 border border-transparent'
-                            }`}
-                        >
-                            <div className="flex items-center justify-between">
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xs text-slate-500 w-5">{idx + 1}</span>
-                                        <span className="font-medium text-slate-200 truncate text-sm">{stock.name}</span>
+                    {stocks.map((stock, idx) => {
+                        const score = scoreMap[stock.code];
+                        const chStatus = chMap[stock.code];
+                        const isCH = chStatus === 'fresh' || chStatus === 'pre';
+                        return (
+                            <button
+                                key={stock.code}
+                                onClick={() => onSelect(stock.code)}
+                                className={`w-full text-left px-3 py-2.5 rounded-lg transition-all ${
+                                    selectedCode === stock.code
+                                        ? 'bg-primary/20 border border-primary/40'
+                                        : 'hover:bg-slate-800/60 border border-transparent'
+                                }`}
+                            >
+                                <div className="flex items-center justify-between">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="text-xs text-slate-500 w-5 shrink-0">{idx + 1}</span>
+                                            <span className="font-medium text-slate-200 truncate text-sm">{stock.name}</span>
+                                            {isCH && (
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                                    chStatus === 'fresh'
+                                                        ? 'bg-purple-600/80 text-purple-100'
+                                                        : 'bg-orange-500/80 text-orange-100'
+                                                }`}>
+                                                    ☕C&H
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-0.5 ml-7">
+                                            <span className="text-xs text-slate-500">{stock.code}</span>
+                                            <span className="text-xs text-slate-600">vol {formatVolume(stock.volume)}</span>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-2 mt-0.5 ml-7">
-                                        <span className="text-xs text-slate-500">{stock.code}</span>
-                                        <span className="text-xs text-slate-600">vol {formatVolume(stock.volume)}</span>
+                                    <div className="text-right shrink-0 ml-2">
+                                        <div className="text-sm font-mono text-slate-200">
+                                            {market === 'US' ? '$' : ''}{stock.price.toLocaleString()}{market === 'KR' ? '원' : ''}
+                                        </div>
+                                        <div className="flex items-center justify-end gap-1.5">
+                                            <div className={`text-xs font-mono ${stock.change_rate > 0 ? 'text-danger' : 'text-blue-400'}`}>
+                                                {stock.change_rate > 0 ? '+' : ''}{stock.change_rate.toFixed(2)}%
+                                            </div>
+                                            {score !== undefined && (
+                                                <span className={`text-[10px] font-bold px-1 py-0.5 rounded font-mono ${
+                                                    score >= 70 ? 'bg-green-500/20 text-green-400' :
+                                                    score >= 50 ? 'bg-yellow-500/20 text-yellow-400' :
+                                                    'bg-slate-700 text-slate-500'
+                                                }`}>
+                                                    {score.toFixed(0)}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
-                                <div className="text-right shrink-0 ml-2">
-                                    <div className="text-sm font-mono text-slate-200">
-                                        {market === 'US' ? '$' : ''}{stock.price.toLocaleString()}{market === 'KR' ? '원' : ''}
-                                    </div>
-                                    <div className={`text-xs font-mono ${stock.change_rate > 0 ? 'text-danger' : 'text-blue-400'}`}>
-                                        {stock.change_rate > 0 ? '+' : ''}{stock.change_rate.toFixed(2)}%
-                                    </div>
-                                </div>
-                            </div>
-                        </button>
-                    ))}
+                            </button>
+                        );
+                    })}
                 </div>
             )}
         </div>

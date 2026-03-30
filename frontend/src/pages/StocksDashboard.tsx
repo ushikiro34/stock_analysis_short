@@ -30,9 +30,11 @@ type ChartMode = 'daily' | 'weekly' | 'minute';
 interface StocksDashboardProps {
     market: Market;
     filter: StockFilter;
+    focusCode?: string;
+    onFocusDone?: () => void;
 }
 
-export default function StocksDashboard({ market, filter }: StocksDashboardProps) {
+export default function StocksDashboard({ market, filter, focusCode, onFocusDone }: StocksDashboardProps) {
     const [stockCode, setStockCode] = useState<string | null>(null);
     const isManualSelectionRef = useRef(false);
     const loadIdRef = useRef(0); // stale 요청 무시용
@@ -197,6 +199,13 @@ export default function StocksDashboard({ market, filter }: StocksDashboardProps
         setChartMode('daily');
         setStockCode(code);
     }, []);
+
+    // 외부(관심종목 탭 등)에서 종목 코드 전달 시 자동 선택
+    useEffect(() => {
+        if (!focusCode) return;
+        handleManualSelect(focusCode);
+        onFocusDone?.();
+    }, [focusCode, handleManualSelect, onFocusDone]);
 
     // Load chart and score for selected stock
     const chartModeRef = useRef(chartMode);

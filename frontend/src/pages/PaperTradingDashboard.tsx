@@ -163,7 +163,7 @@ function Stopwatch({ startedAt, elapsedSeconds }: { startedAt: string | null; el
     );
 }
 
-export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigateToStock?: (name: string) => void }) {
+export default function PaperTradingDashboard({ onNavigateToStock, isVisible }: { onNavigateToStock?: (name: string) => void; isVisible?: boolean }) {
     const [status, setStatus] = useState<PaperStatus | null>(null);
     const [positions, setPositions] = useState<PaperPosition[]>([]);
     const [trades, setTrades] = useState<PaperTrade[]>([]);
@@ -205,6 +205,11 @@ export default function PaperTradingDashboard({ onNavigateToStock }: { onNavigat
         const id = setInterval(fetchAll, REFRESH_INTERVAL);
         return () => clearInterval(id);
     }, [fetchAll]);
+
+    // 탭 진입 시 즉시 새로고침
+    useEffect(() => {
+        if (isVisible) fetchAll();
+    }, [isVisible, fetchAll]);
 
     const handleStart = async () => {
         setActionLoading(true);

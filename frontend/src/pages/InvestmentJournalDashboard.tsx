@@ -241,7 +241,7 @@ function AnalysisModal({ trade, onClose }: { trade: PaperTrade; onClose: () => v
 type SortKey = 'exit_time' | 'entry_time' | 'profit_loss' | 'profit_loss_pct';
 type SortDir = 'asc' | 'desc';
 
-export default function InvestmentJournalDashboard() {
+export default function InvestmentJournalDashboard({ isVisible }: { isVisible?: boolean } = {}) {
     // 필터 상태
     const [dateFrom, setDateFrom] = useState(addDays(todayStr(), -30));
     const [dateTo, setDateTo] = useState(todayStr());
@@ -295,6 +295,18 @@ export default function InvestmentJournalDashboard() {
             profit_type: profitType,
         });
     };
+
+    // 탭 진입 시 기본 조건으로 자동 조회 (최근 30일, 전체 종목)
+    useEffect(() => {
+        if (!isVisible) return;
+        const defaultFrom = addDays(todayStr(), -30);
+        const defaultTo = todayStr();
+        setDateFrom(defaultFrom);
+        setDateTo(defaultTo);
+        setCodeInput('');
+        setProfitType('all');
+        fetchJournal({ date_from: defaultFrom, date_to: defaultTo, profit_type: 'all' });
+    }, [isVisible, fetchJournal]);
 
     // 날짜 이동: from/to 동시에 이동
     const shiftDate = (delta: number) => {

@@ -76,6 +76,7 @@ function App() {
     const [alerts, setAlerts] = useState<SignalAlert[]>([]);          // 토스트용 (8초 자동 소멸)
     const [alertHistory, setAlertHistory] = useState<SignalAlert[]>([]); // 영구 이력 (최대 10개)
     const [focusSignalCode, setFocusSignalCode] = useState<string | undefined>();
+    const [focusStockCode, setFocusStockCode] = useState<string | undefined>();
     const [pollError, setPollError] = useState(false);
     const [showAlertPanel, setShowAlertPanel] = useState(false);
     const bellWrapperRef = useRef<HTMLDivElement>(null);
@@ -598,7 +599,12 @@ function App() {
             {/* Main Content Area */}
             <main className="flex-1 overflow-hidden p-6">
                 <div className={`h-full ${activeTab === 'stocks' ? '' : 'hidden'}`}>
-                    <StocksDashboard market={market} filter={stockFilter} />
+                    <StocksDashboard
+                        market={market}
+                        filter={stockFilter}
+                        focusCode={focusStockCode}
+                        onFocusDone={() => setFocusStockCode(undefined)}
+                    />
                 </div>
                 <div className={`h-full ${activeTab === 'signals' ? '' : 'hidden'}`}>
                     <SignalsDashboard
@@ -615,6 +621,7 @@ function App() {
                 </div>
                 <div className={`h-full ${activeTab === 'paper' ? '' : 'hidden'}`}>
                     <PaperTradingDashboard
+                        isVisible={activeTab === 'paper'}
                         onNavigateToStock={(name: string) => {
                             setActiveTab('stocks');
                             setStockNameInput(name);
@@ -623,10 +630,17 @@ function App() {
                     />
                 </div>
                 <div className={`h-full ${activeTab === 'journal' ? '' : 'hidden'}`}>
-                    <InvestmentJournalDashboard />
+                    <InvestmentJournalDashboard isVisible={activeTab === 'journal'} />
                 </div>
                 <div className={`h-full ${activeTab === 'watchlist' ? '' : 'hidden'}`}>
-                    <WatchlistDashboard market={market} isVisible={activeTab === 'watchlist'} />
+                    <WatchlistDashboard
+                        market={market}
+                        isVisible={activeTab === 'watchlist'}
+                        onNavigateToStock={(code, mkt) => {
+                            setFocusStockCode(code);
+                            setActiveTab('stocks');
+                        }}
+                    />
                 </div>
             </main>
 

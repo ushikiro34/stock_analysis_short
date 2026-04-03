@@ -244,6 +244,7 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                         high: c.high,
                         low: c.low,
                         close: c.close,
+                        volume: c.volume ?? 0,
                     };
                 }
                 return {
@@ -252,6 +253,7 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                     high: c.high,
                     low: c.low,
                     close: c.close,
+                    volume: c.volume ?? 0,
                 };
             });
             setCandles(chartFormatted);
@@ -819,6 +821,12 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                                         :                          'bg-yellow-500/20 text-yellow-300 border-yellow-500/40';
                                     const reasons: string[] = stockAnalysis?.signal_reasons ?? [];
                                     const beScore = stockAnalysis?.score ?? null;
+                                    const ps = stockAnalysis?.pre_surge;
+                                    const hasPreSurge = ps && (
+                                        ps.dryup_recovery.detected ||
+                                        ps.seoryuk.detected ||
+                                        ps.tight_consol.detected
+                                    );
 
                                     return (
                                         <div className="bg-surface rounded-xl border border-slate-700 p-3">
@@ -845,6 +853,28 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                                                     </div>
                                                 ) : (
                                                     stockAnalysis && <p className="text-slate-600 text-[10px] pt-1">신호 근거 없음</p>
+                                                )}
+                                                {hasPreSurge && (
+                                                    <div className="mt-2 pt-2 border-t border-slate-700/60">
+                                                        <p className="text-[10px] font-bold text-purple-400 mb-1">⚡ 급등 전 시그널</p>
+                                                        {ps!.dryup_recovery.detected && (
+                                                            <div className="text-purple-300 text-[10px]">
+                                                                📊 거래량 건조 회복 ({ps!.dryup_recovery.dryup_days}일 건조
+                                                                {ps!.dryup_recovery.extreme_dryup ? ' · 극단' : ''} → ×{ps!.dryup_recovery.vol_ratio_at_recovery})
+                                                            </div>
+                                                        )}
+                                                        {ps!.seoryuk.detected && (
+                                                            <div className="text-red-300 text-[10px]">
+                                                                🔥 세력 매집 의심 (폭발 ×{ps!.seoryuk.spike_ratio} · 최저 ×{ps!.seoryuk.dryup_min_ratio})
+                                                            </div>
+                                                        )}
+                                                        {ps!.tight_consol.detected && (
+                                                            <div className="text-cyan-300 text-[10px]">
+                                                                🗜️ 에너지 압축 {ps!.tight_consol.range_pct}% 횡보
+                                                                {ps!.tight_consol.vol_trend === 'shrinking' ? ' · 거래량 수축' : ''}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>

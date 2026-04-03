@@ -21,6 +21,7 @@ class StartConfig(BaseModel):
     min_score: float = 65.0
     max_positions: int = 2
     position_size_pct: float = 0.15
+    pre_surge_mode: bool = False
 
 
 class AddPositionRequest(BaseModel):

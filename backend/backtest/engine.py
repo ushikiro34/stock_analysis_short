@@ -114,16 +114,16 @@ class BacktestConfig:
     # 청산 조건 — G(보수형) 전략 기본값
     # 검증: 중소형주 8종목 730일 백테스트 D/G/H 비교에서 ROI·MDD 복합 우위 확인
     take_profit_targets: List[Dict] = field(default_factory=lambda: [
-        {"ratio": 0.02, "volume_pct": 0.33, "name": "1차 익절 +2%"},   # 잔여의 1/3 — 빠른 확정 & breakeven 전환
-        {"ratio": 0.05, "volume_pct": 0.50, "name": "2차 익절 +5%"},   # 잔여의 1/2
-        {"ratio": 0.10, "volume_pct": 1.00, "name": "3차 익절 +10%"},  # 전량
+        {"ratio": 0.03, "volume_pct": 0.33, "name": "1차 익절 +3%"},   # 잔여의 1/3
+        {"ratio": 0.07, "volume_pct": 0.50, "name": "2차 익절 +7%"},   # 잔여의 1/2
+        {"ratio": 0.12, "volume_pct": 1.00, "name": "3차 익절 +12%"},  # 전량
     ])
     stop_loss_targets: List[Dict] = field(default_factory=lambda: [
-        {"ratio": -0.01, "volume_pct": 0.33, "name": "1차 손절 -1%"},  # 잔여의 1/3
-        {"ratio": -0.02, "volume_pct": 1.00, "name": "2차 손절 -2%"},  # 전량
+        {"ratio": -0.02, "volume_pct": 0.50, "name": "1차 손절 -2%"},  # 잔여의 1/2
+        {"ratio": -0.04, "volume_pct": 1.00, "name": "2차 손절 -4%"},  # 전량
     ])
-    stop_loss_ratio: float = -0.02  # 하위 호환용 (동적 손절가 초기값으로만 사용)
-    trailing_stop_ratio: float = -0.04  # 최고가 대비 -4% (G전략: 구 D의 -5%보다 타이트)
+    stop_loss_ratio: float = -0.04  # 동적 손절가 초기값
+    trailing_stop_ratio: float = -0.05  # 최고가 대비 -5%
     max_holding_days: int = 5  # 최대 보유 일수 (페이퍼트레이딩과 동일: 5일)
 
     # 수수료

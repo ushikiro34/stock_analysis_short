@@ -863,6 +863,311 @@ class PricePatternSignal:
             "breakout_status": breakout_status,
         }
 
+    # ──────────────────────────────────────────────────────────────
+    # 급등 전 시그널 감지 (Pre-Surge Detection)
+    # ──────────────────────────────────────────────────────────────
+
+    def detect_volume_dryup_recovery(self, ohlcv_data: pd.DataFrame,
+                                      dryup_ratio: float = 0.5,
+                                      recovery_ratio: float = 0.8,
+                                      min_dryup_days: int = 5) -> Dict:
+        """거래량 건조 후 첫 회복일 감지
+
+        패턴: N일 연속 거래량 건조(vol < MA20×dryup_ratio) 후
+              최근 1~3일 내 첫 거래량 회복(vol ≥ MA20×recovery_ratio)
+
+        Args:
+            dryup_ratio:    건조 판정 임계값 (기본 0.5 = MA20의 50%)
+            recovery_ratio: 회복 판정 임계값 (기본 0.8 = MA20의 80%)
+            min_dryup_days: 최소 건조 연속 일수 (기본 5일)
+
+        Returns:
+            {
+                "detected": bool,
+                "score": int,
+                "reasons": list,
+                "dryup_days": int,       # 건조 지속 일수
+                "vol_ratio_at_recovery": float,  # 회복일 거래량/MA20
+                "extreme_dryup": bool,   # 극단 건조 여부 (vol < MA20×0.3)
+            }
+        """
+        result = {"detected": False, "score": 0, "reasons": [], "dryup_days": 0,
+                  "vol_ratio_at_recovery": 0.0, "extreme_dryup": False}
+
+        if len(ohlcv_data) < 30:
+            return result
+
+        volumes = ohlcv_data["Volume"].values
+        n = len(volumes)
+
+        # 기준선: MA60 (없으면 전체 평균) — 건조 구간에 의해 왜곡되지 않는 장기 평균
+        vol_series = pd.Series(volumes)
+        vol_ma60 = vol_series.rolling(60, min_periods=20).mean().values
+
+        def _baseline(idx: int) -> float:
+            """해당 시점의 거래량 기준선 (MA60 or fallback)"""
+            ma = vol_ma60[idx]
+            if pd.isna(ma) or ma == 0:
+                return float(vol_series.iloc[:idx + 1].mean())
+            return float(ma)
+
+        # 최근 3일 이내 회복일이 있는지 확인 (인덱스 -3, -2, -1)
+        recovery_idx = None
+        for offset in range(1, 4):
+            idx = n - offset
+            if idx < 20:
+                break
+            base = _baseline(idx)
+            if base == 0:
+                continue
+            ratio = volumes[idx] / base
+            if ratio >= recovery_ratio:
+                recovery_idx = idx
+                result["vol_ratio_at_recovery"] = round(ratio, 2)
+                break
+
+        if recovery_idx is None:
+            return result
+
+        # 회복일 직전에 N일 연속 건조 구간이 있는지 확인
+        dryup_count = 0
+        extreme_count = 0
+        for i in range(recovery_idx - 1, max(recovery_idx - 40, 19), -1):
+            base = _baseline(i)
+            if base == 0:
+                break
+            ratio_i = volumes[i] / base
+            if ratio_i < dryup_ratio:
+                dryup_count += 1
+                if ratio_i < 0.3:
+                    extreme_count += 1
+            else:
+                break  # 건조 구간 끊김
+
+        if dryup_count < min_dryup_days:
+            return result
+
+        result["detected"] = True
+        result["dryup_days"] = dryup_count
+        result["extreme_dryup"] = extreme_count >= 3
+
+        # 점수 산정
+        score = 30  # 기본: 건조 후 첫 회복
+        if dryup_count >= 10:
+            score += 15
+            result["reasons"].append(f"장기 거래량 건조 ({dryup_count}일) 후 첫 회복")
+        elif dryup_count >= 7:
+            score += 10
+            result["reasons"].append(f"중기 거래량 건조 ({dryup_count}일) 후 첫 회복")
+        else:
+            result["reasons"].append(f"거래량 건조 ({dryup_count}일) 후 첫 회복")
+
+        if result["extreme_dryup"]:
+            score += 15
+            result["reasons"].append(f"극단 거래량 건조 포함 (< MA20×0.3, {extreme_count}일)")
+
+        if result["vol_ratio_at_recovery"] >= 1.5:
+            score += 10
+            result["reasons"].append(f"강한 거래량 회복 (×{result['vol_ratio_at_recovery']:.2f})")
+        elif result["vol_ratio_at_recovery"] >= 1.0:
+            score += 5
+            result["reasons"].append(f"거래량 회복 (×{result['vol_ratio_at_recovery']:.2f})")
+
+        result["score"] = min(score, 70)
+        return result
+
+    def detect_seoryuk_accumulation(self, ohlcv_data: pd.DataFrame,
+                                     extreme_ratio: float = 0.3,
+                                     spike_ratio: float = 2.0,
+                                     lookback: int = 20) -> Dict:
+        """세력 매집 패턴 감지: 극단 건조 후 갑작스러운 거래량 폭발
+
+        패턴: lookback일 내 극단 건조(vol < MA20×extreme_ratio) 구간이 존재하고,
+              최근 1~2일 내 거래량 폭발(vol ≥ MA20×spike_ratio)
+
+        Returns:
+            {
+                "detected": bool,
+                "score": int,
+                "reasons": list,
+                "spike_ratio": float,   # 최근 거래량 폭발 배율
+                "dryup_min_ratio": float,  # 건조 구간 최저 배율
+            }
+        """
+        result = {"detected": False, "score": 0, "reasons": [],
+                  "spike_ratio": 0.0, "dryup_min_ratio": 0.0}
+
+        if len(ohlcv_data) < 30:
+            return result
+
+        volumes = ohlcv_data["Volume"].values
+        closes  = ohlcv_data["Close"].values
+        n = len(volumes)
+
+        # 기준선: MA60 — 건조 구간에 의해 왜곡되지 않는 장기 평균
+        vol_series = pd.Series(volumes)
+        vol_ma60 = vol_series.rolling(60, min_periods=20).mean().values
+
+        def _baseline(idx: int) -> float:
+            ma = vol_ma60[idx]
+            if pd.isna(ma) or ma == 0:
+                return float(vol_series.iloc[:idx + 1].mean())
+            return float(ma)
+
+        # 1) 최근 1~2일 내 거래량 폭발 확인
+        spike_idx = None
+        actual_spike_ratio = 0.0
+        for offset in range(1, 3):
+            idx = n - offset
+            if idx < 20:
+                break
+            base = _baseline(idx)
+            if base == 0:
+                continue
+            r = volumes[idx] / base
+            if r >= spike_ratio:
+                spike_idx = idx
+                actual_spike_ratio = round(r, 2)
+                break
+
+        if spike_idx is None:
+            return result
+
+        # spike 당일 등락률 확인
+        if spike_idx >= 1:
+            spike_chg = (closes[spike_idx] - closes[spike_idx - 1]) / closes[spike_idx - 1]
+            # +5% 이상 급등일 → 이미 급등 완료, 추격 차단
+            if spike_chg >= 0.05:
+                return result
+            # 하락일(-1% 이하) 고거래량 → 분산/매도세, 매집 아님
+            if spike_chg <= -0.01:
+                return result
+
+        # 최근 15일 내 +15% 이상 급등일이 있으면 → 이미 급등 사이클 완료
+        lookback_start = max(spike_idx - 15, 1)
+        for i in range(lookback_start, spike_idx + 1):
+            if (closes[i] - closes[i - 1]) / closes[i - 1] >= 0.15:
+                return result
+
+        # 2) 폭발 직전 lookback일 내 극단 건조 구간 존재 확인
+        search_start = max(spike_idx - lookback, 20)
+        extreme_days = []
+        for i in range(search_start, spike_idx):
+            base = _baseline(i)
+            if base == 0:
+                continue
+            r = volumes[i] / base
+            if r < extreme_ratio:
+                extreme_days.append(r)
+
+        if len(extreme_days) < 3:
+            return result
+
+        dryup_min = min(extreme_days)
+        result["detected"] = True
+        result["spike_ratio"] = actual_spike_ratio
+        result["dryup_min_ratio"] = round(dryup_min, 3)
+
+        # 폭발일 가격 변화
+        if spike_idx >= 1:
+            price_chg = (closes[spike_idx] - closes[spike_idx - 1]) / closes[spike_idx - 1] * 100
+        else:
+            price_chg = 0.0
+
+        score = 35
+        if actual_spike_ratio >= 5.0:
+            score += 20
+            result["reasons"].append(f"극단 거래량 폭발 (MA20×{actual_spike_ratio:.1f}배)")
+        elif actual_spike_ratio >= 3.0:
+            score += 10
+            result["reasons"].append(f"거래량 폭발 (MA20×{actual_spike_ratio:.1f}배)")
+        else:
+            result["reasons"].append(f"거래량 급증 (MA20×{actual_spike_ratio:.1f}배)")
+
+        if len(extreme_days) >= 7:
+            score += 15
+            result["reasons"].append(f"세력 매집 의심: 장기 극단 건조({len(extreme_days)}일) 후 폭발")
+        else:
+            result["reasons"].append(f"세력 매집 의심: 극단 건조({len(extreme_days)}일) 후 폭발")
+
+        if price_chg > 0:
+            result["reasons"].append(f"폭발일 가격 상승 (+{price_chg:.1f}%)")
+            if price_chg >= 3:
+                score += 10
+
+        result["score"] = min(score, 80)
+        return result
+
+    def detect_tight_consolidation(self, ohlcv_data: pd.DataFrame,
+                                    window: int = 10,
+                                    range_pct_threshold: float = 0.08) -> Dict:
+        """타이트 횡보(에너지 압축) 감지
+
+        패턴: 최근 window일 가격 범위 < range_pct_threshold (기본 8%) + 거래량 감소
+
+        Returns:
+            {
+                "detected": bool,
+                "score": int,
+                "reasons": list,
+                "range_pct": float,     # 횡보 구간 변동폭 (%)
+                "vol_trend": str,       # "shrinking" | "flat" | "expanding"
+            }
+        """
+        result = {"detected": False, "score": 0, "reasons": [], "range_pct": 0.0, "vol_trend": "flat"}
+
+        if len(ohlcv_data) < window + 20:
+            return result
+
+        recent = ohlcv_data.tail(window)
+        high = float(recent["High"].max())
+        low  = float(recent["Low"].min())
+
+        if low <= 0:
+            return result
+
+        range_pct = (high - low) / low
+        result["range_pct"] = round(range_pct * 100, 2)
+
+        if range_pct > range_pct_threshold:
+            return result
+
+        # 거래량 추세: 전반부 vs 후반부
+        half = window // 2
+        vol_first = float(recent["Volume"].head(half).mean())
+        vol_last  = float(recent["Volume"].tail(half).mean())
+
+        if vol_first > 0:
+            vol_ratio = vol_last / vol_first
+            if vol_ratio < 0.85:
+                result["vol_trend"] = "shrinking"
+            elif vol_ratio > 1.15:
+                result["vol_trend"] = "expanding"
+            else:
+                result["vol_trend"] = "flat"
+        else:
+            vol_ratio = 1.0
+
+        result["detected"] = True
+        score = 25
+        result["reasons"].append(
+            f"에너지 압축 횡보: {window}일 가격 범위 {result['range_pct']:.1f}% (< {range_pct_threshold*100:.0f}%)"
+        )
+
+        if result["vol_trend"] == "shrinking":
+            score += 20
+            result["reasons"].append(f"횡보 중 거래량 감소 (후반/전반 {vol_ratio:.2f}배)")
+        elif result["vol_trend"] == "flat":
+            score += 5
+            result["reasons"].append("횡보 중 거래량 유지")
+
+        if range_pct < 0.04:
+            score += 15
+            result["reasons"].append(f"초타이트 횡보 (범위 {result['range_pct']:.1f}%)")
+
+        result["score"] = min(score, 60)
+        return result
+
     def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
         """가격 패턴 신호 체크 (눌림목 포함)"""
         if len(ohlcv_data) < 15:
@@ -873,17 +1178,29 @@ class PricePatternSignal:
         score = 0
         pullback_info = None
 
+        # ── 급등 전 시그널 먼저 계산 (early return 이후에도 포함하기 위해) ───
+        dryup_recovery_result = self.detect_volume_dryup_recovery(ohlcv_data)
+        seoryuk_result        = self.detect_seoryuk_accumulation(ohlcv_data)
+        tight_result          = self.detect_tight_consolidation(ohlcv_data)
+
+        pre_surge_info = {
+            "dryup_recovery": dryup_recovery_result,
+            "seoryuk":        seoryuk_result,
+            "tight_consol":   tight_result,
+        }
+
         # 패턴 1: 눌림목 (Pullback) ⭐ 우선 순위
         pullback_result = self.detect_pullback(ohlcv_data)
 
         if pullback_result["is_reversal_risk"]:
-            # 추세전환 위험이 있으면 HOLD 신호
+            # 추세전환 위험이 있으면 HOLD 신호 (단, pre_surge는 포함)
             return {
                 "signal": SignalType.HOLD,
                 "strength": SignalStrength.LOW,
                 "score": 0,
                 "reasons": pullback_result["reasons"],
-                "pullback": pullback_result
+                "pullback": pullback_result,
+                "pre_surge": pre_surge_info,
             }
 
         if pullback_result["is_pullback"]:
@@ -915,6 +1232,22 @@ class PricePatternSignal:
         if len(ohlcv_data) >= 60:
             cup_handle_result = self.detect_cup_and_handle(ohlcv_data)
 
+        # ── 급등 전 시그널 (Pre-Surge Signals) ──────────────────────────
+        # 패턴 6: 거래량 건조 후 첫 회복일
+        if dryup_recovery_result["detected"]:
+            reasons.extend(["📊 거래량 건조 회복"] + dryup_recovery_result["reasons"])
+            score += dryup_recovery_result["score"]
+
+        # 패턴 7: 세력 매집 (극단 건조 후 거래량 폭발)
+        if seoryuk_result["detected"]:
+            reasons.extend(["🔥 세력 매집 의심"] + seoryuk_result["reasons"])
+            score += seoryuk_result["score"]
+
+        # 패턴 8: 타이트 횡보 (에너지 압축)
+        if tight_result["detected"]:
+            reasons.extend(["🗜️ 에너지 압축 횡보"] + tight_result["reasons"])
+            score += tight_result["score"]
+
         # 신호 강도 결정
         if score >= 70:
             strength = SignalStrength.HIGH
@@ -940,6 +1273,9 @@ class PricePatternSignal:
         # 컵앤핸들 별도 필드 (점수 미반영, 독립 판단용)
         if cup_handle_result is not None:
             result["cup_handle"] = cup_handle_result
+
+        # 급등 전 시그널 별도 필드
+        result["pre_surge"] = pre_surge_info
 
         return result
 

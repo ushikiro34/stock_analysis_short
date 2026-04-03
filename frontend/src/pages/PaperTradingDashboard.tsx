@@ -12,6 +12,7 @@ const DEFAULT_CONFIG: PaperStartConfig = {
     min_score: 65,
     max_positions: 3,
     position_size_pct: 0.3,
+    pre_surge_mode: false,
 };
 
 const fmtKRW = (v: number) => v.toLocaleString('ko-KR') + '원';
@@ -400,6 +401,11 @@ export default function PaperTradingDashboard({ onNavigateToStock, isVisible }: 
                     <h2 className="text-2xl font-bold flex items-center gap-2">
                         <Activity className="text-cyan-400" size={28} />
                         모의투자 시뮬레이션
+                        {status?.pre_surge_mode && (
+                            <span className="text-sm font-semibold text-purple-300 bg-purple-500/20 border border-purple-500/40 px-2 py-0.5 rounded-full">
+                                ⚡ 급등 전 시그널
+                            </span>
+                        )}
                     </h2>
                     <p className="text-slate-400 text-sm mt-1">
                         실시간 데이터로 자동매매를 테스트합니다 (실제 거래 없음)
@@ -508,6 +514,24 @@ export default function PaperTradingDashboard({ onNavigateToStock, isVisible }: 
                             <option value={0.5}>50%</option>
                         </select>
                     </label>
+                </div>
+                {/* 급등 전 시그널 모드 */}
+                <div className={`mt-3 flex items-center justify-between rounded-lg border px-4 py-3 transition-colors ${config.pre_surge_mode ? 'border-purple-500/60 bg-purple-500/10' : 'border-slate-700 bg-slate-800/40'}`}>
+                    <div>
+                        <p className={`text-sm font-semibold ${config.pre_surge_mode ? 'text-purple-300' : 'text-slate-300'}`}>
+                            ⚡ 급등 전 시그널 모드
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                            거래량 건조 회복 · 세력 매집 · 에너지 압축 감지 시 자동 진입
+                        </p>
+                    </div>
+                    <button
+                        disabled={status?.is_running}
+                        onClick={() => setConfig(c => ({ ...c, pre_surge_mode: !c.pre_surge_mode }))}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${config.pre_surge_mode ? 'bg-purple-500' : 'bg-slate-600'}`}
+                    >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${config.pre_surge_mode ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
                 </div>
             </div>
 

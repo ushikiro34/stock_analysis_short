@@ -242,10 +242,14 @@ class KISRestClient:
                         change_rate = float(item.get("prdy_ctrt", "0"))
                         if change_rate <= 0:
                             continue
+                        name = item.get("hts_kor_isnm", "")
+                        if any(kw in name for kw in ("레버리지", "인버스", "ETN", "곱버스", "선물")):
+                            continue
                         all_results.append({
                             "code": item.get("mksc_shrn_iscd", ""),
                             "name": item.get("hts_kor_isnm", ""),
                             "price": price,
+                            "high": int(item.get("stck_hgpr", "0")),
                             "change_rate": round(change_rate, 2),
                             "volume": int(item.get("acml_vol", "0")),
                             "change_price": int(item.get("prdy_vrss", "0")),

@@ -67,6 +67,30 @@ export interface StockAnalysis {
     score: number;
     chase_blocked: boolean;
     signal_reasons: string[];
+    pre_surge?: {
+        dryup_recovery: {
+            detected: boolean;
+            score: number;
+            reasons: string[];
+            dryup_days: number;
+            vol_ratio_at_recovery: number;
+            extreme_dryup: boolean;
+        };
+        seoryuk: {
+            detected: boolean;
+            score: number;
+            reasons: string[];
+            spike_ratio: number;
+            dryup_min_ratio: number;
+        };
+        tight_consol: {
+            detected: boolean;
+            score: number;
+            reasons: string[];
+            range_pct: number;
+            vol_trend: string;
+        };
+    } | null;
     updated_at: string;
     error?: string;
 }
@@ -205,6 +229,7 @@ export interface PaperStartConfig {
     min_score: number;
     max_positions: number;
     position_size_pct: number;
+    pre_surge_mode: boolean;
 }
 
 export interface PaperStatus {
@@ -218,6 +243,7 @@ export interface PaperStatus {
     closed_today: number;
     initial_capital: number;
     max_positions: number;
+    pre_surge_mode?: boolean;
 }
 
 export interface PaperPosition {

@@ -73,46 +73,47 @@ export default function WatchlistDashboard({ market, isVisible = false, onNaviga
     // 마켓 변경 시 addMarket 동기화
     useEffect(() => { setAddMarket(market); }, [market]);
 
-    // 초기 로드 + 탭 전환 시 localStorage 재동기화
-    // (탭은 hidden CSS로 숨겨질 뿐 언마운트되지 않으므로 isVisible 변화 감지 필요)
-    useEffect(() => {
-        if (!isVisible) return;
-        const saved = loadWatchlist();
-        setRows(prev => {
-            // localStorage가 source of truth — 기존 분석 데이터(data)는 유지
-            const prevMap = new Map(prev.map(r => [`${r.code}-${r.market}`, r]));
-            return saved.map(w => {
-                const existing = prevMap.get(`${w.code}-${w.market}`);
-                return {
-                    ...w,                              // 최신 WatchItem 필드 (code, market, addedAt, name)
-                    loading: existing?.loading ?? false,
-                    data: existing?.data,
-                    error: existing?.error,
-                };
-            });
-        });
-    }, [isVisible]);
-
-    // 분석 데이터 fetch
+    // 분석 데이터 fetch (최대 4개 동시 — 장 종료 후 느린 백엔드 대비)
     const fetchAll = useCallback(async (items: WatchItem[]) => {
-        if (items.length === 0) return;
+        if (items.length === 0) {
+            setRows([]);
+            return;
+        }
+        // 로딩 상태로 전환 (기존 데이터는 유지)
+        setRows(prev => {
+            const prevMap = new Map(prev.map(r => [`${r.code}-${r.market}`, r]));
+            return items.map(w => ({ ...w, loading: true, data: prevMap.get(`${w.code}-${w.market}`)?.data }));
+        });
         setRefreshing(true);
-        setRows(items.map(w => ({ ...w, loading: true })));
 
-        const results = await Promise.allSettled(
-            items.map(w => fetchStockAnalyze(w.code, w.market))
-        );
+        const results: PromiseSettledResult<StockAnalysis>[] = [];
+        const BATCH = 4;
+        for (let i = 0; i < items.length; i += BATCH) {
+            const batch = items.slice(i, i + BATCH);
+            const batchResults = await Promise.allSettled(
+                batch.map(w => fetchStockAnalyze(w.code, w.market))
+            );
+            results.push(...batchResults);
+        }
 
-        setRows(items.map((w, i) => {
+        setRows(prev => items.map((w, i) => {
             const r = results[i];
+            const existing = prev.find(p => p.code === w.code && p.market === w.market);
             if (r.status === 'fulfilled') {
                 const d = r.value;
                 return { ...w, loading: false, data: d.error ? undefined : d, error: d.error };
             }
-            return { ...w, loading: false, error: String((r as PromiseRejectedResult).reason) };
+            return { ...w, loading: false, data: existing?.data, error: String((r as PromiseRejectedResult).reason) };
         }));
         setRefreshing(false);
     }, []);
+
+    // 초기 로드 + 탭 전환 시 localStorage 재동기화 + 데이터 갱신
+    useEffect(() => {
+        if (!isVisible) return;
+        const saved = loadWatchlist();
+        fetchAll(saved);
+    }, [isVisible, fetchAll]);
 
     const persistAndFetch = (items: WatchItem[]) => {
         saveWatchlist(items);

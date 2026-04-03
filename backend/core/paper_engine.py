@@ -30,16 +30,16 @@ class PaperConfig:
     strategy: str = "combined"
     min_score: float = 65.0
     market: str = "KR"
-    stop_loss_ratio: float = -0.02          # -2% 손절
-    trailing_stop_ratio: float = -0.04      # 최고가 대비 -4% (G전략: 구 -5%보다 타이트)
+    stop_loss_ratio: float = -0.04          # -4% 손절 (동적 손절가 초기값)
+    trailing_stop_ratio: float = -0.05      # 최고가 대비 -5%
     take_profit_targets: List[dict] = field(default_factory=lambda: [
-        {"ratio": 0.02, "volume_pct": 0.33, "name": "1차 익절 +2%"},   # 잔여의 1/3 — 빠른 확정 & breakeven 전환
-        {"ratio": 0.05, "volume_pct": 0.50, "name": "2차 익절 +5%"},   # 잔여의 1/2
-        {"ratio": 0.10, "volume_pct": 1.00, "name": "3차 익절 +10%"},  # 전량
+        {"ratio": 0.03, "volume_pct": 0.33, "name": "1차 익절 +3%"},   # 잔여의 1/3
+        {"ratio": 0.07, "volume_pct": 0.50, "name": "2차 익절 +7%"},   # 잔여의 1/2
+        {"ratio": 0.12, "volume_pct": 1.00, "name": "3차 익절 +12%"},  # 전량
     ])
     stop_loss_targets: List[dict] = field(default_factory=lambda: [
-        {"ratio": -0.01, "volume_pct": 0.33, "name": "1차 손절 -1%"},  # 잔여의 1/3
-        {"ratio": -0.02, "volume_pct": 1.00, "name": "2차 손절 -2%"},  # 전량
+        {"ratio": -0.02, "volume_pct": 0.50, "name": "1차 손절 -2%"},  # 잔여의 1/2
+        {"ratio": -0.04, "volume_pct": 1.00, "name": "2차 손절 -4%"},  # 전량
     ])
     # 진입 필터 (get_volume_rank 기준)
     entry_min_change_rate: float = 3.0    # 등락률 하한 (%)
@@ -47,6 +47,8 @@ class PaperConfig:
     entry_min_volume: int = 100_000       # 최소 거래량 (주)
     max_holding_hours: int = 24 * 5       # 최대 5일 보유
     commission_rate: float = 0.001        # 0.1%
+    # 급등 전 시그널 모드
+    pre_surge_mode: bool = False          # True = 급등 전 시그널 기반 진입
 
 
 # ── 인메모리 포지션 레코드 ────────────────────────────────────
@@ -144,16 +146,36 @@ class PaperEngine:
         return any(p.code == code for p in self.open_positions)
 
     def _passes_entry_filter(self, surge_item: dict) -> bool:
-        """진입 조건 필터: 과열/동력부족/유동성 부족 종목 제외"""
+        """진입 조건 필터: 과열/동력부족/유동성 부족/고점 근접/오후 장 제외"""
+        code = surge_item.get("code", "")
+
+        # 1. 오후 13:30 이후 신규 진입 금지 (세력 분산 시간대)
+        now_kst = datetime.now(KST)
+        if now_kst.time() >= time(13, 30):
+            logger.debug(f"[Filter] {code} 13:30 이후 진입 금지")
+            return False
+
         change_rate = surge_item.get("change_rate", 0)
         volume = surge_item.get("volume", 0)
+        price = surge_item.get("price", 0)
+        high = surge_item.get("high", 0)
+
+        # 2. 등락률 범위 필터
         if not (self.config.entry_min_change_rate <= change_rate <= self.config.entry_max_change_rate):
-            logger.debug(f"[Filter] {surge_item.get('code')} 등락률 {change_rate:.1f}% 제외 "
+            logger.debug(f"[Filter] {code} 등락률 {change_rate:.1f}% 제외 "
                          f"(허용: {self.config.entry_min_change_rate}~{self.config.entry_max_change_rate}%)")
             return False
+
+        # 3. 거래량 필터
         if volume < self.config.entry_min_volume:
-            logger.debug(f"[Filter] {surge_item.get('code')} 거래량 {volume:,}주 부족 제외")
+            logger.debug(f"[Filter] {code} 거래량 {volume:,}주 부족 제외")
             return False
+
+        # 4. 당일 고점 근접 매수 방지 (고점 대비 3% 이내 = 고점에서 사는 꼴)
+        if high > 0 and price > 0 and (price / high) > 0.97:
+            logger.debug(f"[Filter] {code} 고점 근접 제외 (현재 {price:,} / 고가 {high:,} = {price/high*100:.1f}%)")
+            return False
+
         return True
 
     def _check_exit(self, pos: PaperPosition, current_price: float) -> Tuple[bool, str, float]:
@@ -351,7 +373,10 @@ class PaperEngine:
 
         # 2. 신규 진입 스캔
         if self._can_open():
-            await self._scan_and_buy(db, current_prices)
+            if self.config.pre_surge_mode:
+                await self._scan_and_buy_presurge(db, current_prices)
+            else:
+                await self._scan_and_buy(db, current_prices)
 
         # 3. 포트폴리오 기록
         await self._record_portfolio(db, current_prices)
@@ -411,11 +436,12 @@ class PaperEngine:
             profit_loss_pct=round(pl_pct, 2),
         )
         db.add(row)
-        # OPEN 행 수량 업데이트 (서버 재시작 시 잔여 수량으로 복원)
+        # OPEN 행 수량·최고가 업데이트 (서버 재시작 시 정확하게 복원)
         if pos.db_id:
             open_row = await db.get(PaperTrade, pos.db_id)
             if open_row:
                 open_row.quantity = pos.quantity
+                open_row.highest_price = pos.highest_price
         await db.commit()
 
     async def _check_minute_breakout(self, code: str) -> tuple:
@@ -489,6 +515,80 @@ class PaperEngine:
         except Exception as e:
             logger.error(f"[Paper] 신호 스캔 오류: {e}")
 
+    async def _scan_and_buy_presurge(self, db: AsyncSession, current_prices: dict) -> None:
+        """급등 전 시그널 기반 진입 스캔 (pre_surge_mode=True 전용)
+
+        거래량 상위 100종목 중 dryup_recovery / seoryuk / tight_consolidation 감지 시 진입.
+        chase_blocked (당일 +5%↑) 종목은 건너뜀 — 이미 급등 완료로 판단.
+        """
+        from .signal_service import generate_entry_signal, collect_ohlcv_data
+        from ..kis.rest_client import get_kis_client
+        import asyncio
+
+        try:
+            surge = await get_kis_client().get_volume_rank(limit=100)
+        except Exception as e:
+            logger.error(f"[Paper][PreSurge] 거래량 상위 조회 실패: {e}")
+            return
+
+        name_map = {s["code"]: s.get("name", "") for s in surge}
+        # 거래량 최소치만 적용 (등락률 필터는 해제 — 아직 안 움직인 종목을 잡기 위해)
+        candidates = [
+            s["code"] for s in surge
+            if not self._already_holding(s["code"])
+            and s.get("volume", 0) >= self.config.entry_min_volume
+        ]
+        if not candidates:
+            return
+
+        semaphore = asyncio.Semaphore(4)
+
+        async def _check_presurge(code: str):
+            async with semaphore:
+                try:
+                    sig = await generate_entry_signal(code, self.config.market, self.config.strategy)
+                    # 추격차단: 당일 이미 급등한 종목 건너뜀
+                    if sig.get("chase_blocked") or sig.get("breakdown", {}).get("chase_blocked"):
+                        return None
+                    pattern = sig.get("breakdown", {}).get("pattern", {})
+                    ps = pattern.get("pre_surge") or {}
+                    dr = ps.get("dryup_recovery", {})
+                    se = ps.get("seoryuk", {})
+                    tc = ps.get("tight_consol", {})
+                    if dr.get("detected") or se.get("detected") or tc.get("detected"):
+                        sig["_pre_surge"] = ps
+                        sig["_name"] = name_map.get(code, code)
+                        return sig
+                    return None
+                except Exception as e:
+                    logger.debug(f"[Paper][PreSurge] {code} 분석 실패: {e}")
+                    return None
+
+        tasks = [_check_presurge(c) for c in candidates[:50]]
+        results = await asyncio.gather(*tasks)
+        hits = [r for r in results if r is not None]
+
+        # 점수 높은 순 진입
+        hits.sort(key=lambda x: x.get("score", 0), reverse=True)
+        for sig in hits:
+            if not self._can_open():
+                break
+            if self._already_holding(sig["code"]):
+                continue
+            price = sig.get("current_price") or current_prices.get(sig["code"])
+            if not price:
+                continue
+            ps = sig["_pre_surge"]
+            tags = []
+            if ps.get("dryup_recovery", {}).get("detected"):
+                tags.append(f"건조회복({ps['dryup_recovery']['dryup_days']}일)")
+            if ps.get("seoryuk", {}).get("detected"):
+                tags.append(f"세력매집(x{ps['seoryuk']['spike_ratio']:.1f})")
+            if ps.get("tight_consol", {}).get("detected"):
+                tags.append(f"압축횡보({ps['tight_consol']['range_pct']:.1f}%)")
+            logger.info(f"[Paper][PreSurge] 진입 {sig['code']} {sig['_name']} @ {price:,.0f} | {' · '.join(tags)}")
+            await self._do_open(sig, price, db)
+
     async def _do_open(self, signal: dict, price: float, db: AsyncSession) -> None:
         qty = self._calculate_position_size(price)
         if qty <= 0:
@@ -524,6 +624,7 @@ class PaperEngine:
         self.config.min_score = config.get("min_score", self.config.min_score)
         self.config.max_positions = config.get("max_positions", self.config.max_positions)
         self.config.position_size_pct = config.get("position_size_pct", self.config.position_size_pct)
+        self.config.pre_surge_mode = config.get("pre_surge_mode", self.config.pre_surge_mode)
         # 첫 시작이면 현금 초기화
         if not self.is_running and not self.open_positions:
             self.cash = self.config.initial_capital
@@ -568,6 +669,7 @@ class PaperEngine:
             "strategy": self.config.strategy,
             "min_score": self.config.min_score,
             "max_positions": self.config.max_positions,
+            "pre_surge_mode": self.config.pre_surge_mode,
             "initial_capital": self.config.initial_capital,
             "cash": round(self.cash, 0),
             "position_value": round(pos_value, 0),
@@ -664,12 +766,15 @@ class PaperEngine:
                 "market": r.market,
                 "entry_time": (r.entry_time.isoformat() + 'Z') if r.entry_time else None,
                 "entry_price": r.entry_price,
+                "highest_price": r.highest_price,
                 "exit_time": (r.exit_time.isoformat() + 'Z') if r.exit_time else None,
                 "exit_price": r.exit_price,
                 "exit_reason": r.exit_reason,
                 "quantity": r.quantity,
                 "profit_loss": r.profit_loss,
                 "profit_loss_pct": r.profit_loss_pct,
+                "entry_score": r.entry_score,
+                "status": r.status,
             }
             for r in rows
         ]

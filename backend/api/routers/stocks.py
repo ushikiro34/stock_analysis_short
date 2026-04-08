@@ -66,6 +66,7 @@ kis_client = get_kis_client()
 _surge_cache: dict = {"data": [], "ts": 0}
 _us_surge_cache: dict = {"data": [], "ts": 0}
 _penny_stocks_cache: dict = {"data": [], "ts": 0}
+_pre_surge_cache: dict = {"data": [], "ts": 0}
 _weekly_cache: dict = {}
 _minute_cache: dict = {}
 _daily_cache: dict = {}
@@ -236,6 +237,27 @@ async def get_surge_stocks(market: str = "KR", limit: int = 100):
     except Exception as e:
         logger.error(f"KIS volume rank error: {e}")
         return _surge_cache["data"][:limit]
+
+
+@router.get("/pre-surge", response_model=List[dict])
+async def get_pre_surge_stocks():
+    """
+    거래량 상위 종목 중 급등 전 시그널 감지 목록
+    - 건조회복 / 세력매집 / 압축횡보 패턴 탐색
+    - 5분 캐시
+    """
+    now = time.time()
+    if now - _pre_surge_cache["ts"] < 300:
+        return _pre_surge_cache["data"]
+    try:
+        from ...core.signal_service import scan_pre_surge_stocks
+        results = await scan_pre_surge_stocks()
+        _pre_surge_cache["data"] = results
+        _pre_surge_cache["ts"] = now
+        return results
+    except Exception as e:
+        logger.error(f"Pre-surge scan error: {e}")
+        return _pre_surge_cache["data"]
 
 
 @router.get("/penny-stocks", response_model=List[dict])

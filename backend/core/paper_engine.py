@@ -49,6 +49,18 @@ class PaperConfig:
     commission_rate: float = 0.001        # 0.1%
     # 급등 전 시그널 모드
     pre_surge_mode: bool = False          # True = 급등 전 시그널 기반 진입
+    # pre_surge 전용 손익 설정 (일반보다 높은 목표 — 급등 전 진입이므로 큰 수익 기대)
+    pre_surge_take_profit_targets: List[dict] = field(default_factory=lambda: [
+        {"ratio": 0.08,  "volume_pct": 0.33, "name": "급등전 1차 익절 +8%"},
+        {"ratio": 0.18,  "volume_pct": 0.50, "name": "급등전 2차 익절 +18%"},
+        {"ratio": 0.30,  "volume_pct": 1.00, "name": "급등전 3차 익절 +30%"},
+    ])
+    pre_surge_stop_loss_targets: List[dict] = field(default_factory=lambda: [
+        {"ratio": -0.03, "volume_pct": 0.50, "name": "급등전 1차 손절 -3%"},
+        {"ratio": -0.05, "volume_pct": 1.00, "name": "급등전 2차 손절 -5%"},
+    ])
+    pre_surge_trailing_stop_ratio: float = -0.08  # 고점 대비 -8% (넓게 — 급등 추세 유지)
+    pre_surge_max_holding_hours: int = 24 * 7     # 최대 7일 (급등 대기)
 
 
 # ── 인메모리 포지션 레코드 ────────────────────────────────────
@@ -69,6 +81,7 @@ class PaperPosition:
     executed_sl_targets: set = field(default_factory=set)  # 실행된 손절 단계 인덱스
     dynamic_stop_price: float = 0.0  # 동적 손절가 (1차 익절 후 본전으로 이동)
     breakeven_active: bool = False    # 1차 익절 후 break-even 발동 여부
+    is_presurge: bool = False         # True = 급등 전 시그널 진입 (전용 손익 설정 사용)
 
     def update_highest(self, price: float):
         self.highest_price = max(self.highest_price, price)
@@ -185,8 +198,14 @@ class PaperEngine:
         pos.update_highest(current_price)
         ratio = (current_price - pos.entry_price) / pos.entry_price
 
+        # 급등 전 진입 vs 일반 진입 — 전용 설정 분기
+        tp_targets = self.config.pre_surge_take_profit_targets if pos.is_presurge else self.config.take_profit_targets
+        sl_targets = self.config.pre_surge_stop_loss_targets if pos.is_presurge else self.config.stop_loss_targets
+        trailing = self.config.pre_surge_trailing_stop_ratio if pos.is_presurge else self.config.trailing_stop_ratio
+        max_hours = self.config.pre_surge_max_holding_hours if pos.is_presurge else self.config.max_holding_hours
+
         # 1. 분할 익절 (이미 실행된 단계는 건너뜀)
-        for i, tgt in enumerate(self.config.take_profit_targets):
+        for i, tgt in enumerate(tp_targets):
             if i in pos.executed_tp_targets:
                 continue
             if ratio >= tgt["ratio"]:
@@ -201,7 +220,7 @@ class PaperEngine:
                 return True, "손절(본전)", 1.0
         else:
             # Phase A: 1차 익절 전 → 분할 손절
-            for i, sl in enumerate(self.config.stop_loss_targets):
+            for i, sl in enumerate(sl_targets):
                 if i in pos.executed_sl_targets:
                     continue
                 if ratio <= sl["ratio"]:
@@ -209,13 +228,13 @@ class PaperEngine:
                     return True, sl["name"], sl["volume_pct"]
 
         # 3. 트레일링 스톱 (최고가 경신 후 하락 시)
-        trail_threshold = pos.highest_price * (1 + self.config.trailing_stop_ratio)
+        trail_threshold = pos.highest_price * (1 + trailing)
         if current_price <= trail_threshold and pos.highest_price > pos.entry_price:
             return True, "trailing_stop", 1.0
 
         # 4. 최대 보유 시간
-        if pos.holding_hours() >= self.config.max_holding_hours:
-            return True, f"time_limit_{self.config.max_holding_hours}h", 1.0
+        if pos.holding_hours() >= max_hours:
+            return True, f"time_limit_{max_hours}h", 1.0
 
         return False, "", 0.0
 
@@ -587,9 +606,9 @@ class PaperEngine:
             if ps.get("tight_consol", {}).get("detected"):
                 tags.append(f"압축횡보({ps['tight_consol']['range_pct']:.1f}%)")
             logger.info(f"[Paper][PreSurge] 진입 {sig['code']} {sig['_name']} @ {price:,.0f} | {' · '.join(tags)}")
-            await self._do_open(sig, price, db)
+            await self._do_open(sig, price, db, is_presurge=True)
 
-    async def _do_open(self, signal: dict, price: float, db: AsyncSession) -> None:
+    async def _do_open(self, signal: dict, price: float, db: AsyncSession, is_presurge: bool = False) -> None:
         qty = self._calculate_position_size(price)
         if qty <= 0:
             return
@@ -599,6 +618,7 @@ class PaperEngine:
 
         self.cash -= cost
         from datetime import timezone
+        sl_ratio = self.config.pre_surge_stop_loss_targets[1]["ratio"] if is_presurge else self.config.stop_loss_ratio
         pos = PaperPosition(
             db_id=None,
             code=signal["code"],
@@ -609,7 +629,8 @@ class PaperEngine:
             quantity=qty,
             highest_price=price,
             entry_score=signal.get("score", 0.0),
-            dynamic_stop_price=price * (1 + self.config.stop_loss_ratio),
+            dynamic_stop_price=price * (1 + sl_ratio),
+            is_presurge=is_presurge,
         )
         self.open_positions.append(pos)
         logger.info(f"[Paper] BUY {pos.code} x{qty} @ {price:,.0f}원 (score={pos.entry_score:.0f})")

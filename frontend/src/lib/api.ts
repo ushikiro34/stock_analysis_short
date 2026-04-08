@@ -13,6 +13,23 @@ export interface SurgeStock {
     change_price: number;
 }
 
+export interface PreSurgePattern {
+    type: 'dryup_recovery' | 'seoryuk' | 'tight_consol';
+    label: string;
+    score: number;
+}
+
+export interface PreSurgeCandidate {
+    code: string;
+    name: string;
+    price: number;
+    change_rate: number;
+    score: number;
+    patterns: PreSurgePattern[];
+    overall_score: number;
+    timestamp: string;
+}
+
 export interface StockScore {
     code: string;
     calculated_at?: string;
@@ -327,6 +344,9 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 export const fetchSurgeStocks = (market: Market): Promise<SurgeStock[]> =>
     get(`/stocks/surge?market=${market}`);
+
+export const fetchPreSurgeScan = (): Promise<PreSurgeCandidate[]> =>
+    get('/stocks/pre-surge');
 
 export const fetchStockScore = (code: string, market: Market): Promise<StockScore> =>
     get(`/stocks/${code}/score?market=${market}`);

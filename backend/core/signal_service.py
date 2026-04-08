@@ -663,6 +663,83 @@ async def scan_pullback_candidates(
     return results
 
 
+async def scan_pre_surge_stocks(market: str = "KR", limit: int = 80) -> List[Dict]:
+    """
+    거래량 상위 종목 중 급등 전 시그널(건조회복/세력매집/압축횡보) 감지
+
+    - 등락률 필터 없음 (아직 안 움직인 종목 포함)
+    - 거래량 상위 80종목 스캔 → pre_surge 패턴 있는 종목만 반환
+    - score 내림차순 정렬
+    """
+    from .signals import PricePatternSignal
+    from ..kis.rest_client import get_kis_client
+
+    try:
+        stocks = await get_kis_client().get_volume_rank(max_price=20000, limit=limit, min_change_rate=-999)
+    except Exception as e:
+        logger.error(f"[PreSurge] 거래량 조회 실패: {e}")
+        return []
+
+    codes = [s["code"] for s in stocks]
+    name_map = {s["code"]: s["name"] for s in stocks}
+    price_map = {s["code"]: s["price"] for s in stocks}
+    change_map = {s["code"]: s["change_rate"] for s in stocks}
+
+    scanner = PricePatternSignal()
+    semaphore = asyncio.Semaphore(6)
+
+    async def _check(code: str) -> Optional[Dict]:
+        async with semaphore:
+            try:
+                ohlcv = await collect_ohlcv_data(code, market, days=90)
+                if ohlcv.empty or len(ohlcv) < 60:
+                    return None
+
+                result = scanner.check_signal(ohlcv)
+                pre = result.get("breakdown", {}).get("pattern", {}).get("pre_surge")
+                if not pre:
+                    return None
+
+                # 감지된 패턴만 추출
+                patterns = []
+                best_score = 0
+                if pre.get("dryup_recovery", {}).get("detected"):
+                    s = pre["dryup_recovery"].get("score", 0)
+                    patterns.append({"type": "dryup_recovery", "label": "건조회복", "score": s})
+                    best_score = max(best_score, s)
+                if pre.get("seoryuk", {}).get("detected"):
+                    s = pre["seoryuk"].get("score", 0)
+                    patterns.append({"type": "seoryuk", "label": "세력매집", "score": s})
+                    best_score = max(best_score, s)
+                if pre.get("tight_consol", {}).get("detected"):
+                    s = pre["tight_consol"].get("score", 0)
+                    patterns.append({"type": "tight_consol", "label": "압축횡보", "score": s})
+                    best_score = max(best_score, s)
+
+                if not patterns:
+                    return None
+
+                return {
+                    "code": code,
+                    "name": name_map.get(code, code),
+                    "price": price_map.get(code, 0),
+                    "change_rate": change_map.get(code, 0),
+                    "score": best_score,
+                    "patterns": patterns,
+                    "overall_score": result.get("score", 0),
+                    "timestamp": datetime.now().isoformat(),
+                }
+            except Exception as e:
+                logger.error(f"[PreSurge] {code} 오류: {e}")
+                return None
+
+    tasks = [_check(code) for code in codes]
+    results = [r for r in await asyncio.gather(*tasks) if r is not None]
+    results.sort(key=lambda x: x["score"], reverse=True)
+    logger.info(f"[PreSurge] {len(results)}/{len(codes)} pre-surge candidates")
+    return results
+
+
 async def scan_signals_from_surge_stocks(market: str = "KR", strategy: str = "combined",
                                         min_score: float = 60) -> List[Dict]:
     """

@@ -4,7 +4,7 @@ import ScoreCard from '../components/ScoreCard';
 import RiskCard from '../components/RiskCard';
 import SurgeList from '../components/SurgeList';
 import { Loader2, TrendingUp, TrendingDown, Star } from 'lucide-react';
-import { fetchStockScore, fetchDailyChart, fetchWeeklyChart, fetchMinuteChart, fetchSurgeStocks, fetchEntrySignal, fetchStockAnalyze, scanPullback, type StockScore, type StockAnalysis, type SurgeStock, type Market, type EntrySignal, type PullbackCandidate } from '../lib/api';
+import { fetchStockScore, fetchDailyChart, fetchWeeklyChart, fetchSurgeStocks, fetchPreSurgeScan, fetchEntrySignal, fetchStockAnalyze, scanPullback, type StockScore, type StockAnalysis, type SurgeStock, type PreSurgeCandidate, type Market, type EntrySignal, type PullbackCandidate } from '../lib/api';
 import type { StockFilter } from '../App';
 
 // WatchlistDashboard 와 동일한 키/구조 사용 → 두 탭 간 관심종목 동기화
@@ -25,7 +25,7 @@ function saveWatchlist(list: WatchItem[]) {
     localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
 }
 
-type ChartMode = 'daily' | 'weekly' | 'minute';
+type ChartMode = 'daily' | 'weekly';
 
 interface StocksDashboardProps {
     market: Market;
@@ -89,9 +89,11 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
     const stockName = surgeInfo?.name ?? stockCode ?? '';
 
     // Left panel tab: 급등주 vs 눌림목
-    const [leftTab, setLeftTab] = useState<'surge' | 'pullback'>('surge');
+    const [leftTab, setLeftTab] = useState<'surge' | 'pullback' | 'presurge'>('surge');
     const [pullbackCandidates, setPullbackCandidates] = useState<PullbackCandidate[]>([]);
     const [pullbackLoading, setPullbackLoading] = useState(false);
+    const [preSurgeCandidates, setPreSurgeCandidates] = useState<PreSurgeCandidate[]>([]);
+    const [preSurgeLoading, setPreSurgeLoading] = useState(false);
 
     // Watchlist (localStorage) — WatchlistDashboard 와 동일 키/구조
     const [watchlist, setWatchlist] = useState<WatchItem[]>(loadWatchlist);
@@ -112,6 +114,19 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
     useEffect(() => {
         if (leftTab === 'pullback') runPullbackScan();
     }, [leftTab, runPullbackScan]);
+
+    const runPreSurgeScan = useCallback(async () => {
+        setPreSurgeLoading(true);
+        try {
+            const results = await fetchPreSurgeScan();
+            setPreSurgeCandidates(results);
+        } catch { setPreSurgeCandidates([]); }
+        finally { setPreSurgeLoading(false); }
+    }, []);
+
+    useEffect(() => {
+        if (leftTab === 'presurge') runPreSurgeScan();
+    }, [leftTab, runPreSurgeScan]);
 
     const toggleWatchlist = useCallback(() => {
         if (!stockCode) return;
@@ -222,7 +237,7 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
             setError(null);
         }
         try {
-            const fetchChart = currentMode === 'minute' ? fetchMinuteChart : currentMode === 'weekly' ? fetchWeeklyChart : fetchDailyChart;
+            const fetchChart = currentMode === 'weekly' ? fetchWeeklyChart : fetchDailyChart;
             const [chartData, scoreData] = await Promise.all([
                 fetchChart(code, currentMarket),
                 fetchStockScore(code, currentMarket),
@@ -236,26 +251,14 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                 .then(d => { if (myLoadId === loadIdRef.current) setStockAnalysis(d.error ? null : d); })
                 .catch(() => { if (myLoadId === loadIdRef.current) setStockAnalysis(null); });
 
-            const chartFormatted = chartData.map((c) => {
-                if (currentMode === 'minute') {
-                    return {
-                        time: Math.floor(new Date(c.time).getTime() / 1000),
-                        open: c.open,
-                        high: c.high,
-                        low: c.low,
-                        close: c.close,
-                        volume: c.volume ?? 0,
-                    };
-                }
-                return {
-                    time: c.time,
-                    open: c.open,
-                    high: c.high,
-                    low: c.low,
-                    close: c.close,
-                    volume: c.volume ?? 0,
-                };
-            });
+            const chartFormatted = chartData.map((c) => ({
+                time: c.time,
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume: c.volume ?? 0,
+            }));
             setCandles(chartFormatted);
             setScore(scoreData);
         } catch (err: any) {
@@ -378,6 +381,12 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                         급등주
                     </button>
                     <button
+                        onClick={() => setLeftTab('presurge')}
+                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${leftTab === 'presurge' ? 'bg-amber-500 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                        ⚡급등전
+                    </button>
+                    <button
                         onClick={() => setLeftTab('pullback')}
                         className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${leftTab === 'pullback' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
                     >
@@ -403,6 +412,70 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                                 필터 조건에 맞는 종목이 없습니다
                             </div>
                         )}
+                    </div>
+                )}
+
+                {/* 급등 전 탭 */}
+                {leftTab === 'presurge' && (
+                    <div className="flex-1 overflow-y-auto">
+                        <div className="flex items-center justify-between mb-3 px-1">
+                            <span className="text-xs text-slate-400">거래량 상위 80종목 스캔</span>
+                            <button
+                                onClick={runPreSurgeScan}
+                                disabled={preSurgeLoading}
+                                className="text-xs px-2 py-1 rounded bg-amber-600/30 text-amber-300 hover:bg-amber-600/50 disabled:opacity-40 transition-all"
+                            >
+                                {preSurgeLoading ? '스캔 중…' : '재스캔'}
+                            </button>
+                        </div>
+
+                        {preSurgeLoading && (
+                            <div className="flex justify-center py-10">
+                                <Loader2 className="animate-spin text-amber-400" size={20} />
+                            </div>
+                        )}
+
+                        {!preSurgeLoading && preSurgeCandidates.length === 0 && (
+                            <div className="text-center py-10 text-slate-500 text-xs px-2">
+                                급등 전 시그널 종목 없음<br />재스캔을 눌러 탐색하세요
+                            </div>
+                        )}
+
+                        <div className="space-y-2">
+                            {preSurgeCandidates.map(c => (
+                                <button
+                                    key={c.code}
+                                    onClick={() => handleSelectStock(c.code)}
+                                    className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${
+                                        stockCode === c.code
+                                            ? 'border-amber-500 bg-amber-500/10'
+                                            : 'border-slate-700/50 bg-slate-800/40 hover:border-amber-500/40 hover:bg-amber-500/5'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between mb-1">
+                                        <span className="text-sm font-semibold text-slate-100">{c.name}</span>
+                                        <span className="text-xs font-bold text-amber-400">점수 {c.score}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <span className="text-xs text-slate-400">{c.code}</span>
+                                        <span className={`text-xs font-medium ${c.change_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                                            {c.change_rate >= 0 ? '+' : ''}{c.change_rate.toFixed(2)}%
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                        {c.patterns.map(p => (
+                                            <span key={p.type} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                                                p.type === 'seoryuk' ? 'bg-purple-500/20 text-purple-300' :
+                                                p.type === 'dryup_recovery' ? 'bg-amber-500/20 text-amber-300' :
+                                                'bg-teal-500/20 text-teal-300'
+                                            }`}>
+                                                {p.label} {p.score}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 )}
 
@@ -555,12 +628,12 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
 
                         {/* ── 중간: 차트 (50% 축소) ───────────────────────── */}
                         <div className="flex gap-2 mb-2 shrink-0">
-                            {(['daily','weekly','minute'] as ChartMode[]).map(m => (
+                            {(['daily','weekly'] as ChartMode[]).map(m => (
                                 <button key={m} onClick={() => setChartMode(m)}
                                     className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
                                         chartMode === m ? 'bg-primary text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                                     }`}>
-                                    {m === 'daily' ? '일봉' : m === 'weekly' ? '주봉' : '분봉'}
+                                    {m === 'daily' ? '일봉' : '주봉'}
                                 </button>
                             ))}
                         </div>

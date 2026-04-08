@@ -190,8 +190,10 @@ class KISRestClient:
             logger.error(f"[{code}] KIS fundamental parse error: {e}")
             return {}
 
-    async def get_volume_rank(self, max_price: int = 20000, limit: int = 100) -> list[dict]:
-        """KIS REST API로 거래량 상위 급등주 조회"""
+    async def get_volume_rank(self, max_price: int = 20000, limit: int = 100, min_change_rate: float = 0.001) -> list[dict]:
+        """KIS REST API로 거래량 상위 종목 조회
+        min_change_rate: 최소 등락률 (기본 0.001 = 양봉만, -999 = 전체)
+        """
         token = await self._get_token()
         headers = {
             "authorization": f"Bearer {token}",
@@ -240,7 +242,7 @@ class KISRestClient:
                         if price <= 0 or price > max_price:
                             continue
                         change_rate = float(item.get("prdy_ctrt", "0"))
-                        if change_rate <= 0:
+                        if change_rate < min_change_rate:
                             continue
                         name = item.get("hts_kor_isnm", "")
                         if any(kw in name for kw in ("레버리지", "인버스", "ETN", "곱버스", "선물")):

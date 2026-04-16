@@ -11,11 +11,17 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password
 # SSL only for remote DB (Supabase), not for localhost
 connect_args = {}
 is_remote = "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL
+is_pgbouncer = ":6543" in DATABASE_URL  # Transaction Pooler 포트
 if is_remote:
     ssl_context = ssl.create_default_context()
     ssl_context.check_hostname = False
     ssl_context.verify_mode = ssl.CERT_NONE
     connect_args["ssl"] = ssl_context
+
+if is_pgbouncer:
+    # pgbouncer(Transaction Pooler)는 prepared statements 미지원
+    # statement_cache_size=0 으로 비활성화
+    connect_args["statement_cache_size"] = 0
 
 engine = create_async_engine(
     DATABASE_URL,

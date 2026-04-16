@@ -59,6 +59,12 @@ _KOSDAQ_INDEX_TICKER = "2001"
 _shared_market_cache: Dict = {}
 _SHARED_MARKET_TTL = 300  # 5분 TTL
 
+# ── 종목별 OHLCV 캐시 ─────────────────────────────────────────────────────
+# 키: "{market}:{code}:{days}" → 값: {"data": DataFrame, "ts": float}
+# Bulk 스캔(급등전/눌림목) 시 동일 종목 중복 조회 방지
+_ohlcv_cache: Dict = {}
+_OHLCV_CACHE_TTL = 300  # 5분 TTL
+
 # ── 종목별 상장 시장(KOSPI/KOSDAQ) 감지 캐시 ─────────────────────────────
 _ticker_market_cache: Dict = {}
 _TICKER_MARKET_TTL = 3600  # 1시간 TTL (장중 상장 시장은 변하지 않음)
@@ -143,7 +149,7 @@ def _compute_atr_stop(entry_price: float, atr: float, max_loss_ratio: float = 0.
 
 async def collect_ohlcv_data(code: str, market: str = "KR", days: int = 120) -> pd.DataFrame:
     """
-    OHLCV 데이터 수집
+    OHLCV 데이터 수집 (5분 메모리 캐시 적용)
 
     Args:
         code: 종목 코드
@@ -153,58 +159,63 @@ async def collect_ohlcv_data(code: str, market: str = "KR", days: int = 120) -> 
     Returns:
         DataFrame with columns: Open, High, Low, Close, Volume
     """
+    import time as _time
+    cache_key = f"{market}:{code}:{days}"
+    cached = _ohlcv_cache.get(cache_key)
+    if cached and (_time.time() - cached["ts"]) < _OHLCV_CACHE_TTL:
+        return cached["data"]
+
     if market == "US":
         from ..us.yfinance_client import _run_sync as us_run_sync
         import yfinance as yf
+        from datetime import timezone
 
         def _fetch():
+            end_dt = datetime.now()
+            start_dt = end_dt - timedelta(days=days)
             ticker = yf.Ticker(code)
-            df = ticker.history(period=f"{days}d", interval="1d")
+            df = ticker.history(start=start_dt.strftime("%Y-%m-%d"),
+                                end=end_dt.strftime("%Y-%m-%d"),
+                                interval="1d")
+            if df.empty:
+                return pd.DataFrame()
+            return df[["Open", "High", "Low", "Close", "Volume"]]
+
+        df = await us_run_sync(_fetch)
+
+    else:
+        # KR
+        end = datetime.now()
+        start = end - timedelta(days=days)
+
+        try:
+            df = await _run_sync(
+                lambda: pykrx_stock.get_market_ohlcv_by_date(
+                    start.strftime("%Y%m%d"),
+                    end.strftime("%Y%m%d"),
+                    code
+                )
+            )
+
             if df.empty:
                 return pd.DataFrame()
 
-            # 컬럼명 통일
             df = df.rename(columns={
-                "Open": "Open",
-                "High": "High",
-                "Low": "Low",
-                "Close": "Close",
-                "Volume": "Volume"
+                "시가": "Open",
+                "고가": "High",
+                "저가": "Low",
+                "종가": "Close",
+                "거래량": "Volume"
             })
-            return df[["Open", "High", "Low", "Close", "Volume"]]
+            df = df[["Open", "High", "Low", "Close", "Volume"]]
 
-        return await us_run_sync(_fetch)
-
-    # KR
-    end = datetime.now()
-    start = end - timedelta(days=days)
-
-    try:
-        df = await _run_sync(
-            lambda: pykrx_stock.get_market_ohlcv_by_date(
-                start.strftime("%Y%m%d"),
-                end.strftime("%Y%m%d"),
-                code
-            )
-        )
-
-        if df.empty:
+        except Exception as e:
+            logger.error(f"[{code}] OHLCV collection error: {e}")
             return pd.DataFrame()
 
-        # 컬럼명 통일
-        df = df.rename(columns={
-            "시가": "Open",
-            "고가": "High",
-            "저가": "Low",
-            "종가": "Close",
-            "거래량": "Volume"
-        })
-
-        return df[["Open", "High", "Low", "Close", "Volume"]]
-
-    except Exception as e:
-        logger.error(f"[{code}] OHLCV collection error: {e}")
-        return pd.DataFrame()
+    if not df.empty:
+        _ohlcv_cache[cache_key] = {"data": df, "ts": _time.time()}
+    return df
 
 
 async def collect_investor_supply_data(code: str, market: str = "KR", days: int = 12) -> Optional[pd.DataFrame]:

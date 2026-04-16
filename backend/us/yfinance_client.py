@@ -167,8 +167,13 @@ async def get_penny_stocks_with_volume_pattern(limit: int = 50) -> list[dict]:
 async def get_us_daily_chart(symbol: str, days: int = 90) -> list[dict]:
     """yfinance로 미국 일봉 OHLCV 조회"""
     def _fetch():
+        from datetime import datetime, timedelta
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=days)
         ticker = yf.Ticker(symbol)
-        df = ticker.history(period=f"{days}d", interval="1d")
+        df = ticker.history(start=start_dt.strftime("%Y-%m-%d"),
+                            end=end_dt.strftime("%Y-%m-%d"),
+                            interval="1d")
         results = []
         for date, row in df.iterrows():
             if int(row.get("Volume", 0)) == 0:

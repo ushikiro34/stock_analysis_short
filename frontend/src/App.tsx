@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2, BookOpen, Star } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2, BookOpen, Star, Flame } from 'lucide-react';
 import type { Market, LogEntry, MonitorStatus } from './lib/api';
 import { scanSignals, monitor } from './lib/api';
 
@@ -11,8 +11,9 @@ import OptimizeDashboard from './pages/OptimizeDashboard';
 import PaperTradingDashboard from './pages/PaperTradingDashboard';
 import InvestmentJournalDashboard from './pages/InvestmentJournalDashboard';
 import WatchlistDashboard from './pages/WatchlistDashboard';
+import LiveTradingDashboard from './pages/LiveTradingDashboard';
 
-type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper' | 'journal' | 'watchlist';
+type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper' | 'journal' | 'watchlist' | 'live';
 
 export type PriceFilter = 'all' | 'penny' | 'range';
 
@@ -254,6 +255,7 @@ function App() {
         { id: 'paper' as Tab, label: '모의투자', icon: PlayCircle, color: 'text-cyan-400' },
         { id: 'journal' as Tab, label: '투자일지', icon: BookOpen, color: 'text-amber-400' },
         { id: 'watchlist' as Tab, label: '관심종목', icon: Star, color: 'text-yellow-400' },
+        { id: 'live' as Tab, label: '실전매매', icon: Flame, color: 'text-red-400' },
     ];
 
     return (
@@ -467,10 +469,10 @@ function App() {
                     </div>
                 </div>
 
-                {/* Tab Navigation + Filter */}
-                <div className="flex items-center justify-between px-6">
+                {/* Tab Navigation + Stock Filter (같은 라인) */}
+                <div className="flex items-center justify-between px-6 py-2.5 gap-4">
                     {/* Tabs */}
-                    <div className="flex gap-1">
+                    <div className="flex items-center gap-1.5 shrink-0">
                         {tabs.map(tab => {
                             const Icon = tab.icon;
                             const isActive = activeTab === tab.id;
@@ -478,116 +480,80 @@ function App() {
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`flex items-center gap-2 px-5 py-3 font-medium transition-colors relative ${
+                                    className={`flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg border transition-all ${
                                         isActive
-                                            ? 'text-white'
-                                            : 'text-slate-400 hover:text-slate-200'
+                                            ? 'bg-slate-700 border-slate-500 text-white shadow-sm'
+                                            : 'bg-transparent border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200 hover:bg-slate-800/60'
                                     }`}
                                 >
-                                    <Icon size={18} className={isActive ? tab.color : ''} />
+                                    <Icon size={15} className={isActive ? tab.color : 'text-slate-500'} />
                                     <span>{tab.label}</span>
-                                    {isActive && (
-                                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                                    )}
                                 </button>
                             );
                         })}
                     </div>
 
-                    {/* Stock Filter - Only show on stocks tab */}
+                    {/* Stock Filter - 주식 분석 탭일 때만 표시, 같은 줄 오른쪽 */}
                     {activeTab === 'stocks' && (
-                        <div className="flex items-center gap-4 pb-3">
-                            {/* Price Filter Radio */}
-                            <div className="flex items-center gap-3 text-sm">
-                                <label className="flex items-center gap-1 cursor-pointer">
-                                    <input
-                                        type="radio"
-                                        checked={stockFilter.priceFilter === 'all'}
-                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'all' })}
-                                        className="w-4 h-4"
-                                    />
-                                    <span className="text-slate-300">전체</span>
-                                </label>
-                                <label className="flex items-center gap-1 cursor-pointer">
-                                    <input
-                                        type="radio"
-                                        checked={stockFilter.priceFilter === 'penny'}
-                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'penny' })}
-                                        className="w-4 h-4"
-                                    />
-                                    <span className="text-slate-300 inline-block w-24">{market === 'KR' ? '1,000원 미만' : '$1 미만'}</span>
-                                </label>
-                                <label className="flex items-center gap-1 cursor-pointer">
-                                    <input
-                                        type="radio"
-                                        checked={stockFilter.priceFilter === 'range'}
-                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'range' })}
-                                        className="w-4 h-4"
-                                    />
-                                    <span className="text-slate-300">가격 범위</span>
-                                </label>
-                            </div>
-
-                            {/* Price Range Inputs - 항상 동일한 크기 유지 */}
+                        <div className="flex items-center gap-3 shrink-0">
+                            {/* 가격 필터 */}
                             <div className="flex items-center gap-2">
-                                <span className="text-slate-400 text-sm w-4 text-right shrink-0">
-                                    {market === 'US' ? '$' : ''}
-                                </span>
-                                <input
-                                    type="number"
-                                    placeholder={market === 'KR' ? '최소' : 'From'}
-                                    value={stockFilter.priceFrom || ''}
-                                    onChange={(e) => setStockFilter({
-                                        ...stockFilter,
-                                        priceFrom: e.target.value ? Number(e.target.value) : undefined,
-                                        priceFilter: 'range'
-                                    })}
-                                    disabled={stockFilter.priceFilter !== 'range'}
-                                    className={`w-28 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-sm focus:outline-none focus:border-primary ${
-                                        stockFilter.priceFilter !== 'range' ? 'opacity-50 cursor-not-allowed' : ''
-                                    }`}
-                                />
-                                <span className="text-slate-400 text-xs w-4 shrink-0">
-                                    {market === 'KR' ? '원' : ''}
-                                </span>
-                                <span className="text-slate-500">~</span>
-                                <span className="text-slate-400 text-sm w-4 text-right shrink-0">
-                                    {market === 'US' ? '$' : ''}
-                                </span>
-                                <input
-                                    type="number"
-                                    placeholder={market === 'KR' ? '최대' : 'To'}
-                                    value={stockFilter.priceTo || ''}
-                                    onChange={(e) => setStockFilter({
-                                        ...stockFilter,
-                                        priceTo: e.target.value ? Number(e.target.value) : undefined,
-                                        priceFilter: 'range'
-                                    })}
-                                    disabled={stockFilter.priceFilter !== 'range'}
-                                    className={`w-28 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-sm focus:outline-none focus:border-primary ${
-                                        stockFilter.priceFilter !== 'range' ? 'opacity-50 cursor-not-allowed' : ''
-                                    }`}
-                                />
-                                <span className="text-slate-400 text-xs w-4 shrink-0">
-                                    {market === 'KR' ? '원' : ''}
-                                </span>
+                                <span className="text-xs text-slate-500 shrink-0">가격</span>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                    <input type="radio" checked={stockFilter.priceFilter === 'all'}
+                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'all' })}
+                                        className="w-3.5 h-3.5" />
+                                    <span className="text-slate-300 text-xs">전체</span>
+                                </label>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                    <input type="radio" checked={stockFilter.priceFilter === 'penny'}
+                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'penny' })}
+                                        className="w-3.5 h-3.5" />
+                                    <span className="text-slate-300 text-xs">{market === 'KR' ? '1천원 미만' : '$1 미만'}</span>
+                                </label>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                    <input type="radio" checked={stockFilter.priceFilter === 'range'}
+                                        onChange={() => setStockFilter({ ...stockFilter, priceFilter: 'range' })}
+                                        className="w-3.5 h-3.5" />
+                                    <span className="text-slate-300 text-xs">범위</span>
+                                </label>
                             </div>
 
-                            {/* Stock Name Search - 엔터 또는 조회 버튼 */}
+                            {/* 범위 입력 */}
                             <div className="flex items-center gap-1">
-                                <input
-                                    type="text"
-                                    placeholder="종목명 검색..."
+                                {market === 'US' && <span className="text-slate-400 text-xs">$</span>}
+                                <input type="number" placeholder={market === 'KR' ? '최소' : 'From'}
+                                    value={stockFilter.priceFrom || ''}
+                                    onChange={(e) => setStockFilter({ ...stockFilter, priceFrom: e.target.value ? Number(e.target.value) : undefined, priceFilter: 'range' })}
+                                    disabled={stockFilter.priceFilter !== 'range'}
+                                    className={`w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs focus:outline-none focus:border-primary ${stockFilter.priceFilter !== 'range' ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                />
+                                {market === 'KR' && <span className="text-slate-500 text-xs">원</span>}
+                                <span className="text-slate-600 text-xs">~</span>
+                                {market === 'US' && <span className="text-slate-400 text-xs">$</span>}
+                                <input type="number" placeholder={market === 'KR' ? '최대' : 'To'}
+                                    value={stockFilter.priceTo || ''}
+                                    onChange={(e) => setStockFilter({ ...stockFilter, priceTo: e.target.value ? Number(e.target.value) : undefined, priceFilter: 'range' })}
+                                    disabled={stockFilter.priceFilter !== 'range'}
+                                    className={`w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs focus:outline-none focus:border-primary ${stockFilter.priceFilter !== 'range' ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                />
+                                {market === 'KR' && <span className="text-slate-500 text-xs">원</span>}
+                            </div>
+
+                            {/* 구분선 */}
+                            <div className="h-4 w-px bg-slate-700" />
+
+                            {/* 종목명 검색 */}
+                            <div className="flex items-center gap-1">
+                                <input type="text" placeholder="종목명 검색..."
                                     value={stockNameInput}
                                     onChange={(e) => setStockNameInput(e.target.value)}
                                     onKeyDown={(e) => e.key === 'Enter' && handleStockNameSearch()}
-                                    className="w-40 px-3 py-1 bg-slate-800 border border-slate-700 rounded text-sm focus:outline-none focus:border-primary"
+                                    className="w-32 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs focus:outline-none focus:border-primary"
                                 />
-                                <button
-                                    onClick={handleStockNameSearch}
-                                    className="px-2 py-1 bg-primary hover:bg-primary/80 rounded text-sm transition-colors flex items-center gap-1"
-                                >
-                                    <Search size={14} />
+                                <button onClick={handleStockNameSearch}
+                                    className="px-2 py-1 bg-primary hover:bg-primary/80 rounded text-xs transition-colors flex items-center gap-1">
+                                    <Search size={12} />
                                     <span>조회</span>
                                 </button>
                             </div>
@@ -641,6 +607,9 @@ function App() {
                             setActiveTab('stocks');
                         }}
                     />
+                </div>
+                <div className={`h-full ${activeTab === 'live' ? '' : 'hidden'}`}>
+                    <LiveTradingDashboard isVisible={activeTab === 'live'} />
                 </div>
             </main>
 

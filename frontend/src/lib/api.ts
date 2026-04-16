@@ -467,3 +467,139 @@ export const paperTrading = {
         return get(`/paper/journal?${p.toString()}`);
     },
 };
+
+// ── Live Trading ───────────────────────────────────────────────
+
+export interface LiveStatus {
+    is_running: boolean;
+    enabled: boolean;
+    open_positions: number;
+    max_positions: number;
+    pre_surge_mode: boolean;
+    daily_loss_limit: number;
+}
+
+export interface LivePosition {
+    db_id: number | null;
+    code: string;
+    name: string;
+    entry_price: number;
+    quantity: number;
+    highest_price: number;
+    entry_score: number;
+    is_presurge: boolean;
+    holding_hours: number;
+    current_price: number | null;
+    unrealized_pnl_pct: number | null;
+}
+
+export interface LiveTrade {
+    id: number;
+    code: string;
+    name: string;
+    market: string;
+    entry_time: string | null;
+    entry_price: number;
+    highest_price: number;
+    exit_time: string | null;
+    exit_price: number | null;
+    exit_reason: string | null;
+    quantity: number;
+    profit_loss: number;
+    profit_loss_pct: number;
+    is_presurge: boolean;
+}
+
+export interface LiveTradesResponse {
+    trades: LiveTrade[];
+    total: number;
+    total_pnl: number;
+    profit_count: number;
+    profit_amount: number;
+    loss_count: number;
+    loss_amount: number;
+}
+
+export interface LiveHistoryPoint {
+    recorded_at: string;
+    total_value: number;
+    cash: number;
+    position_value: number;
+}
+
+export interface LiveBalance {
+    cash: number;
+    total_eval: number;
+    positions: Array<{ code: string; qty: number; avg_price: number; eval_amount: number }>;
+}
+
+export interface LiveStartConfig {
+    market?: string;
+    strategy?: string;
+    min_score?: number;
+    max_positions?: number;
+    position_size_pct?: number;
+    pre_surge_mode?: boolean;
+}
+
+export interface LiveDailyTrade {
+    code: string;
+    name: string;
+    entry_price: number;
+    exit_price: number | null;
+    quantity: number;
+    profit_loss: number;
+    profit_loss_pct: number;
+    exit_reason: string | null;
+    is_presurge: boolean;
+    holding_hours: number;
+}
+
+export interface LiveDailyReport {
+    id: number;
+    report_date: string;
+    total_trades: number;
+    profit_count: number;
+    loss_count: number;
+    total_pnl: number;
+    win_rate: number;
+    avg_pnl_pct: number;
+    avg_holding_hours: number;
+    best_trade_code: string | null;
+    best_trade_name: string | null;
+    best_trade_pnl_pct: number | null;
+    worst_trade_code: string | null;
+    worst_trade_name: string | null;
+    worst_trade_pnl_pct: number | null;
+    presurge_count: number;
+    presurge_pnl: number;
+    exit_reasons: Record<string, number>;
+    trades: LiveDailyTrade[];
+    ai_summary: string;
+    created_at: string | null;
+}
+
+export const liveTrading = {
+    getStatus: (): Promise<LiveStatus> =>
+        get('/live/status'),
+    getBalance: (): Promise<LiveBalance> =>
+        get('/live/balance'),
+    getPositions: (): Promise<LivePosition[]> =>
+        get('/live/positions'),
+    getTrades: (limit = 50): Promise<LiveTradesResponse> =>
+        get(`/live/trades?limit=${limit}`),
+    getHistory: (limit = 200): Promise<LiveHistoryPoint[]> =>
+        get(`/live/history?limit=${limit}`),
+    start: (config: LiveStartConfig): Promise<unknown> =>
+        post('/live/start', config),
+    stop: (): Promise<unknown> =>
+        post('/live/stop', {}),
+    closeAllPositions: (): Promise<unknown> =>
+        post('/live/positions/close-all', {}),
+    getDailyReports: (limit = 30): Promise<LiveDailyReport[]> =>
+        get(`/live/daily-reports?limit=${limit}`),
+    getDailyReport: (date: string): Promise<LiveDailyReport> =>
+        get(`/live/daily-reports/${date}`),
+    generateReport: (date?: string): Promise<LiveDailyReport> =>
+        post(`/live/daily-reports/generate${date ? `?report_date=${date}` : ''}`, {}),
+};

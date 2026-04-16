@@ -279,3 +279,279 @@ def get_kis_client() -> KISRestClient:
     if _default_client is None:
         _default_client = KISRestClient()
     return _default_client
+
+
+# ════════════════════════════════════════════════════════════════
+# 실전 주문/잔고 API
+# ════════════════════════════════════════════════════════════════
+
+class KISOrderClient:
+    """KIS 실전 주문 클라이언트 (계좌번호 필요)"""
+
+    BASE_URL = "https://openapi.koreainvestment.com:9443"
+
+    def __init__(self):
+        self.app_key    = os.getenv("KIS_APP_KEY")
+        self.app_secret = os.getenv("KIS_APP_SECRET")
+        self.cano       = os.getenv("KIS_CANO")           # 계좌번호 앞 8자리
+        self.acnt_prdt  = os.getenv("KIS_ACNT_PRDT_CD", "01")
+        self._token: str | None = None
+        self._token_expires: float = 0
+
+    async def _get_token(self) -> str:
+        if self._token and time.time() < self._token_expires:
+            return self._token
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.post(
+                f"{self.BASE_URL}/oauth2/tokenP",
+                json={
+                    "grant_type": "client_credentials",
+                    "appkey": self.app_key,
+                    "appsecret": self.app_secret,
+                },
+            )
+            res.raise_for_status()
+            data = res.json()
+            self._token = data["access_token"]
+            self._token_expires = time.time() + 23 * 3600
+            return self._token
+
+    def _order_headers(self, tr_id: str) -> dict:
+        return {
+            "authorization": f"Bearer {self._token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": tr_id,
+            "content-type": "application/json; charset=utf-8",
+        }
+
+    # ── 매수 주문 ─────────────────────────────────────────────
+
+    async def place_buy_order(self, code: str, qty: int, price: int = 0) -> dict:
+        """시장가(price=0) 또는 지정가 매수.
+
+        Returns:
+            {"order_no": str, "order_time": str} 또는 에러 시 raise
+        """
+        await self._get_token()
+        # price=0 → 시장가(tr_id TTTC0802U), price>0 → 지정가(TTTC0801U)
+        if price == 0:
+            tr_id = "TTTC0802U"
+            ord_dvsn = "01"   # 시장가
+            ord_unpr = "0"
+        else:
+            tr_id = "TTTC0801U"
+            ord_dvsn = "00"   # 지정가
+            ord_unpr = str(price)
+
+        body = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt,
+            "PDNO": code,
+            "ORD_DVSN": ord_dvsn,
+            "ORD_QTY": str(qty),
+            "ORD_UNPR": ord_unpr,
+        }
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.post(
+                f"{self.BASE_URL}/uapi/domestic-stock/v1/trading/order-cash",
+                headers=self._order_headers(tr_id),
+                json=body,
+            )
+            res.raise_for_status()
+            data = res.json()
+
+        if data.get("rt_cd") != "0":
+            raise RuntimeError(f"[KIS] 매수 주문 실패 {code}: {data.get('msg1')}")
+
+        out = data.get("output", {})
+        logger.info(f"[KIS] BUY {code} x{qty} @ {'시장가' if price==0 else price} → 주문번호 {out.get('ODNO')}")
+        return {"order_no": out.get("ODNO", ""), "order_time": out.get("ORD_TMD", "")}
+
+    # ── 매도 주문 ─────────────────────────────────────────────
+
+    async def place_sell_order(self, code: str, qty: int, price: int = 0) -> dict:
+        """시장가(price=0) 또는 지정가 매도."""
+        await self._get_token()
+        if price == 0:
+            tr_id = "TTTC0801U"
+            ord_dvsn = "01"
+            ord_unpr = "0"
+        else:
+            tr_id = "TTTC0801U"
+            ord_dvsn = "00"
+            ord_unpr = str(price)
+
+        body = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt,
+            "PDNO": code,
+            "ORD_DVSN": ord_dvsn,
+            "ORD_QTY": str(qty),
+            "ORD_UNPR": ord_unpr,
+            "SLL_TYPE": "01",   # 매도 구분
+        }
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.post(
+                f"{self.BASE_URL}/uapi/domestic-stock/v1/trading/order-cash",
+                headers=self._order_headers(tr_id),
+                json=body,
+            )
+            res.raise_for_status()
+            data = res.json()
+
+        if data.get("rt_cd") != "0":
+            raise RuntimeError(f"[KIS] 매도 주문 실패 {code}: {data.get('msg1')}")
+
+        out = data.get("output", {})
+        logger.info(f"[KIS] SELL {code} x{qty} @ {'시장가' if price==0 else price} → 주문번호 {out.get('ODNO')}")
+        return {"order_no": out.get("ODNO", ""), "order_time": out.get("ORD_TMD", "")}
+
+    # ── 주문 취소 ─────────────────────────────────────────────
+
+    async def cancel_order(self, order_no: str, code: str, qty: int) -> bool:
+        """미체결 주문 취소."""
+        await self._get_token()
+        body = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt,
+            "KRX_FWDG_ORD_ORGNO": "",
+            "ORGN_ODNO": order_no,
+            "PDNO": code,
+            "ORD_DVSN": "00",
+            "RVSE_CNCL_DVSN_CD": "02",   # 02=취소
+            "ORD_QTY": str(qty),
+            "ORD_UNPR": "0",
+            "QTY_ALL_ORD_YN": "Y",
+        }
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.post(
+                f"{self.BASE_URL}/uapi/domestic-stock/v1/trading/order-rvsecncl",
+                headers=self._order_headers("TTTC0803U"),
+                json=body,
+            )
+            res.raise_for_status()
+            data = res.json()
+
+        ok = data.get("rt_cd") == "0"
+        logger.info(f"[KIS] CANCEL 주문{order_no} {'성공' if ok else '실패: ' + data.get('msg1','')}")
+        return ok
+
+    # ── 잔고 조회 ─────────────────────────────────────────────
+
+    async def get_balance(self) -> dict:
+        """실제 보유 종목 및 예수금 조회.
+
+        Returns:
+            {
+                "cash": 주문가능현금,
+                "total_eval": 총평가금액,
+                "positions": [{"code", "name", "qty", "avg_price", "current_price", "pnl_pct"}, ...]
+            }
+        """
+        await self._get_token()
+        params = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "01",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.get(
+                f"{self.BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance",
+                headers=self._order_headers("TTTC8434R"),
+                params=params,
+            )
+            res.raise_for_status()
+            data = res.json()
+
+        if data.get("rt_cd") != "0":
+            raise RuntimeError(f"[KIS] 잔고 조회 실패: {data.get('msg1')}")
+
+        output1 = data.get("output1", [])   # 보유 종목
+        output2 = data.get("output2", [{}]) # 계좌 요약
+
+        positions = []
+        for item in output1:
+            qty = int(item.get("hldg_qty", "0"))
+            if qty <= 0:
+                continue
+            positions.append({
+                "code":          item.get("pdno", ""),
+                "name":          item.get("prdt_name", ""),
+                "qty":           qty,
+                "avg_price":     float(item.get("pchs_avg_pric", "0")),
+                "current_price": float(item.get("prpr", "0")),
+                "pnl_pct":       float(item.get("evlu_pfls_rt", "0")),
+            })
+
+        summary = output2[0] if output2 else {}
+        return {
+            "cash":       float(summary.get("dnca_tot_amt", "0")),
+            "total_eval": float(summary.get("tot_evlu_amt", "0")),
+            "positions":  positions,
+        }
+
+    # ── 체결 확인 ─────────────────────────────────────────────
+
+    async def get_order_status(self, order_no: str) -> dict:
+        """주문 체결 여부 조회.
+
+        Returns:
+            {"filled": bool, "filled_qty": int, "avg_price": float}
+        """
+        await self._get_token()
+        params = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt,
+            "INQR_STRT_DT": datetime.now().strftime("%Y%m%d"),
+            "INQR_END_DT":  datetime.now().strftime("%Y%m%d"),
+            "SLL_BUY_DVSN_CD": "00",
+            "INQR_DVSN": "00",
+            "PDNO": "",
+            "CCLD_DVSN": "00",
+            "ORD_GNO_BRNO": "",
+            "ODNO": order_no,
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.get(
+                f"{self.BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+                headers=self._order_headers("TTTC8001R"),
+                params=params,
+            )
+            res.raise_for_status()
+            data = res.json()
+
+        for item in data.get("output1", []):
+            if item.get("odno") == order_no:
+                filled_qty = int(item.get("tot_ccld_qty", "0"))
+                return {
+                    "filled":     filled_qty > 0,
+                    "filled_qty": filled_qty,
+                    "avg_price":  float(item.get("avg_prvs", "0")),
+                    "status":     item.get("ord_stts", ""),
+                }
+        return {"filled": False, "filled_qty": 0, "avg_price": 0.0, "status": "unknown"}
+
+
+# ── 싱글턴 ───────────────────────────────────────────────────
+_order_client: KISOrderClient | None = None
+
+
+def get_kis_order_client() -> KISOrderClient:
+    """실전 주문 클라이언트 싱글턴"""
+    global _order_client
+    if _order_client is None:
+        _order_client = KISOrderClient()
+    return _order_client

@@ -166,7 +166,66 @@ class TestResistanceVolumeExit:
 
 
 # ─────────────────────────────────────────────────────────────
-# 3. MinuteBreakoutSignal candle_volume 필드
+# 3. 컵앤핸들 소멸(failed) 감지
+# ─────────────────────────────────────────────────────────────
+
+class TestCupHandleFailed:
+    def setup_method(self):
+        self.signal = PricePatternSignal()
+
+    def _make_cup_handle_data(self, cur_price_ratio=0.80):
+        """
+        컵 구조: 80일 데이터
+          - 좌측 림: 100 (초반 20일)
+          - 바닥: 65 (중간 30일, 깊이 35%)
+          - 우측 림: 100 (후반 20일)
+          - 핸들: 5일, 현재가 = right_rim * cur_price_ratio
+        """
+        import numpy as np
+        rows = []
+        # 좌측 림 구간 (고점 100)
+        for i in range(20):
+            rows.append(dict(Open=98, High=100, Low=95, Close=100 - i * 0.1, Volume=2000))
+        # 하락 구간 (100 → 65)
+        for i in range(15):
+            p = 100 - (i + 1) * (35 / 15)
+            rows.append(dict(Open=p+1, High=p+2, Low=p-1, Close=p, Volume=1500))
+        # 바닥 구간 (65 근방)
+        for i in range(10):
+            rows.append(dict(Open=65, High=67, Low=63, Close=65, Volume=1000))
+        # 상승 구간 (65 → 100)
+        for i in range(15):
+            p = 65 + (i + 1) * (35 / 15)
+            rows.append(dict(Open=p-1, High=p+1, Low=p-2, Close=p, Volume=1800))
+        # 우측 림 구간 (100 근방)
+        for i in range(15):
+            rows.append(dict(Open=99, High=101, Low=97, Close=100, Volume=1500))
+        # 핸들 + 현재가 (last candle = cur_price_ratio * right_rim)
+        cur = round(100 * cur_price_ratio, 1)
+        for i in range(4):
+            rows.append(dict(Open=99, High=100, Low=96, Close=98, Volume=800))
+        rows.append(dict(Open=cur-1, High=cur+1, Low=cur-2, Close=cur, Volume=900))
+        return make_ohlcv(rows)
+
+    def test_failed_status_detected(self):
+        """현재가 우측 림 대비 -14% → breakout_status = 'failed'"""
+        df = self._make_cup_handle_data(cur_price_ratio=0.86)
+        result = self.signal.detect_cup_and_handle(df)
+        # 패턴 자체는 감지되어야 함 (score >= 40)
+        assert result.get("score", 0) >= 40
+        assert result.get("breakout_status") == "failed"
+        assert result.get("is_cup_handle") is False  # 소멸 = 진입 신호 아님
+
+    def test_forming_status_not_failed(self):
+        """현재가 우측 림 대비 -8% → 'forming' (아직 소멸 아님)"""
+        df = self._make_cup_handle_data(cur_price_ratio=0.92)
+        result = self.signal.detect_cup_and_handle(df)
+        if result.get("score", 0) >= 40:
+            assert result.get("breakout_status") in ("forming", "pre", "fresh")
+
+
+# ─────────────────────────────────────────────────────────────
+# 4. MinuteBreakoutSignal candle_volume 필드
 # ─────────────────────────────────────────────────────────────
 
 class TestMinuteBreakoutCandleVolume:

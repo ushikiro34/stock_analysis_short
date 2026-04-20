@@ -824,8 +824,15 @@ class PricePatternSignal:
                 approach_pct = (current_price / right_rim - 1) * 100
                 this_score += 15
                 this_reasons.append(f"우측 림 접근 중 ({right_rim:,.0f}원, {approach_pct:.1f}%)")
+            elif current_price < right_rim * 0.88:
+                # 우측 림보다 12% 이상 하락 → 핸들 지지선 이탈, 패턴 소멸
+                breakout_status = "failed"
+                decline_pct = (1 - current_price / right_rim) * 100
+                this_reasons.append(
+                    f"⚠️ 컵앤핸들 패턴 소멸 (우측 림 {right_rim:,.0f}원 대비 -{decline_pct:.1f}% 이탈)"
+                )
             else:
-                # 패턴 형성 중 (아직 림까지 거리 있음)
+                # 패턴 형성 중 (우측 림 -12% ~ -5% 구간)
                 breakout_status = "forming"
 
             if best is None or this_score > best["score"]:
@@ -1331,7 +1338,7 @@ class PricePatternSignal:
         score = 0
         pullback_info = None
 
-        # ── 급등 전 시그널 먼저 계산 (early return 이후에도 포함하기 위해) ───
+        # ── early return 이후에도 포함할 분석을 미리 계산 ─────────────────
         dryup_recovery_result = self.detect_volume_dryup_recovery(ohlcv_data)
         seoryuk_result        = self.detect_seoryuk_accumulation(ohlcv_data)
         tight_result          = self.detect_tight_consolidation(ohlcv_data)
@@ -1342,11 +1349,16 @@ class PricePatternSignal:
             "tight_consol":   tight_result,
         }
 
+        # 컵앤핸들 — reversal_risk early return에도 포함해야 하므로 먼저 계산
+        cup_handle_result: Optional[Dict] = None
+        if len(ohlcv_data) >= 60:
+            cup_handle_result = self.detect_cup_and_handle(ohlcv_data)
+
         # 패턴 1: 눌림목 (Pullback) ⭐ 우선 순위
         pullback_result = self.detect_pullback(ohlcv_data)
 
         if pullback_result["is_reversal_risk"]:
-            # 추세전환 위험이 있으면 HOLD 신호 (단, pre_surge / candle_volume은 포함)
+            # 추세전환 위험이 있으면 HOLD 신호 (단, pre_surge / candle_volume / cup_handle 은 포함)
             return {
                 "signal": SignalType.HOLD,
                 "strength": SignalStrength.LOW,
@@ -1354,6 +1366,7 @@ class PricePatternSignal:
                 "reasons": pullback_result["reasons"],
                 "pullback": pullback_result,
                 "pre_surge": pre_surge_info,
+                "cup_handle": cup_handle_result,
                 "candle_volume": self.detect_candle_volume_resistance(ohlcv_data),
             }
 
@@ -1381,10 +1394,7 @@ class PricePatternSignal:
                 reasons.append(f"20일 상승 추세 (+{returns_20d*100:.1f}%)")
                 score += 15
 
-        # 패턴 5: 컵앤핸들 (점수에 반영하지 않고 별도 필드로 반환)
-        cup_handle_result = None
-        if len(ohlcv_data) >= 60:
-            cup_handle_result = self.detect_cup_and_handle(ohlcv_data)
+        # 패턴 5: 컵앤핸들 (점수에 반영하지 않고 별도 필드로 반환) — 상단에서 이미 계산됨
 
         # ── 급등 전 시그널 (Pre-Surge Signals) ──────────────────────────
         # 패턴 6: 거래량 건조 후 첫 회복일
@@ -2462,12 +2472,17 @@ class SignalManager:
                         chase_reason = f"[추격차단] 당일 +{pct:.1f}% 급등 (≥5%, 고점 진입 위험)"
 
             if chase_blocked:
+                # 추격 차단이어도 컵앤핸들 형성 여부는 정보 제공 (진입 금지 ≠ 패턴 없음)
+                ch_result = None
+                if len(ohlcv_data) >= 60:
+                    ch_result = self.pattern_signal.detect_cup_and_handle(ohlcv_data)
                 return {
                     "signal": SignalType.HOLD,
                     "strength": SignalStrength.LOW,
                     "score": 0,
                     "reasons": [chase_reason],
                     "chase_blocked": True,
+                    "cup_handle": ch_result,
                     "breakdown": {},
                 }
 
@@ -2547,6 +2562,9 @@ class SignalManager:
                 "score": round(total_score, 1),
                 "base_score": round(base_score, 1),  # 수급·섹터 보너스 전 순수 기술 점수
                 "reasons": all_reasons,
+                # cup_handle / candle_volume을 top-level에 버블업 (signal_service 접근 편의)
+                "cup_handle": pattern_result.get("cup_handle"),
+                "candle_volume": pattern_result.get("candle_volume"),
                 "breakdown": {
                     "volume": volume_result,
                     "technical": technical_result,

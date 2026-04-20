@@ -82,6 +82,14 @@ class PaperTrade(Base):
     exit_reason     = Column(String(64), nullable=True)
     profit_loss     = Column(Float, default=0.0)
     profit_loss_pct = Column(Float, default=0.0)
+    # ── 신규 로직 추적 컬럼 (4/20 추가) ──
+    is_presurge          = Column(Boolean, default=False)
+    has_cup_handle       = Column(Boolean, default=False)   # 진입 시 컵앤핸들 감지 여부
+    cup_handle_status    = Column(String(16), nullable=True) # fresh/pre/forming
+    has_candle_vol_signal = Column(Boolean, default=False)  # 캔들+거래량 버팀 신호 여부
+    resistance_price     = Column(Float, default=0.0)       # 진입 시 저항 가격
+    resistance_volume    = Column(Float, default=0.0)       # 진입 시 저항 거래량
+    entry_reasons_json   = Column(Text, nullable=True)      # JSON: 진입 사유 전체
 
 
 class PaperPortfolioHistory(Base):

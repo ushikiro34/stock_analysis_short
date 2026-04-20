@@ -85,6 +85,11 @@ class PaperPosition:
     # ── 저항 거래량 추적 (2순위: 저항가 근처 거래량 미달 시 익절) ──
     resistance_price: float = 0.0    # 진입 시 감지된 저항 가격대
     resistance_volume: float = 0.0   # 저항 캔들 최대 거래량 (기준값)
+    # ── 신규 로직 추적 (분석용) ──────────────────────────────────
+    has_cup_handle: bool = False         # 진입 시 컵앤핸들 감지 여부
+    cup_handle_status: str = ""          # fresh/pre/forming
+    has_candle_vol_signal: bool = False  # 버팀 진입 신호 여부
+    entry_reasons: list = field(default_factory=list)  # 진입 사유 목록
 
     def update_highest(self, price: float):
         self.highest_price = max(self.highest_price, price)
@@ -346,6 +351,7 @@ class PaperEngine:
         await db.commit()
 
     async def _save_open_position(self, pos: PaperPosition, db: AsyncSession) -> None:
+        import json
         from ..db.models import PaperTrade
         row = PaperTrade(
             code=pos.code,
@@ -357,6 +363,13 @@ class PaperEngine:
             highest_price=pos.highest_price,
             entry_score=pos.entry_score,
             status="OPEN",
+            is_presurge=pos.is_presurge,
+            has_cup_handle=pos.has_cup_handle,
+            cup_handle_status=pos.cup_handle_status or None,
+            has_candle_vol_signal=pos.has_candle_vol_signal,
+            resistance_price=pos.resistance_price,
+            resistance_volume=pos.resistance_volume,
+            entry_reasons_json=json.dumps(pos.entry_reasons, ensure_ascii=False) if pos.entry_reasons else None,
         )
         db.add(row)
         await db.flush()        # id 할당
@@ -657,6 +670,16 @@ class PaperEngine:
         res_price  = float(candle_vol.get("resistance_price", 0) or 0)
         res_volume = float(candle_vol.get("max_resistance_volume", 0) or 0)
 
+        # 컵앤핸들 / 캔들 버팀 신호 추적
+        cup_handle_data = (
+            signal.get("cup_handle")
+            or signal.get("breakdown", {}).get("pattern", {}).get("cup_handle")
+            or {}
+        )
+        ch_status = cup_handle_data.get("breakout_status", "") if cup_handle_data else ""
+        has_ch = bool(cup_handle_data.get("score", 0) >= 40) if cup_handle_data else False
+        has_cv = bool(candle_vol.get("entry_signal", False))
+
         pos = PaperPosition(
             db_id=None,
             code=signal["code"],
@@ -671,6 +694,10 @@ class PaperEngine:
             is_presurge=is_presurge,
             resistance_price=res_price,
             resistance_volume=res_volume,
+            has_cup_handle=has_ch,
+            cup_handle_status=ch_status,
+            has_candle_vol_signal=has_cv,
+            entry_reasons=signal.get("reasons", []),
         )
         self.open_positions.append(pos)
         res_info = f" | 저항가={res_price:,.0f} 저항거래량={res_volume:.0f}" if res_price > 0 else ""

@@ -452,11 +452,19 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
         sector_data=sector_data,
     )
 
-    # 컵앤핸들 / 캔들-거래량 결과 추출 (combined → breakdown.pattern, pattern → 직접)
-    pattern_result = result.get("breakdown", {}).get("pattern") or result
-    cup_handle_data = pattern_result.get("cup_handle", {})
+    # 컵앤핸들 / 캔들-거래량 결과 추출
+    # combined: top-level에 버블업됨, pattern: 직접 result에 있음
+    cup_handle_data = (
+        result.get("cup_handle")
+        or result.get("breakdown", {}).get("pattern", {}).get("cup_handle")
+        or {}
+    )
     cup_handle_confirmed = bool(cup_handle_data.get("is_cup_handle", False))
-    candle_volume_data = pattern_result.get("candle_volume", {})
+    candle_volume_data = (
+        result.get("candle_volume")
+        or result.get("breakdown", {}).get("pattern", {}).get("candle_volume")
+        or {}
+    )
 
     # 진입 시점 ATR 계산 — 손절가 사전 안내용 (entry-time 고정)
     entry_atr = None

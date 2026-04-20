@@ -603,3 +603,139 @@ export const liveTrading = {
     generateReport: (date?: string): Promise<LiveDailyReport> =>
         post(`/live/daily-reports/generate${date ? `?report_date=${date}` : ''}`, {}),
 };
+
+// ── Morning Briefing ──────────────────────────────────────────
+
+export interface DartDisclosure {
+    corp_name: string;
+    stock_code: string;
+    report_nm: string;
+    rcept_dt: string;
+    rcept_no: string;
+    dart_type: string;
+    dart_url: string;
+}
+
+export interface BriefingCandidate {
+    code: string;
+    name: string;
+    source: 'dart' | 'theme' | 'news_llm';
+    reason: string;
+    dart_type?: string;
+    theme_name?: string;
+    dart_url?: string;
+}
+
+export interface MorningBriefing {
+    id: number;
+    briefing_date: string;
+    dart_items: DartDisclosure[];
+    dart_count: number;
+    news_items: { title: string; link: string; source: string }[];
+    llm_candidates: BriefingCandidate[];
+    themes_detected: Record<string, string[]>;
+    theme_stocks: BriefingCandidate[];
+    all_candidates: BriefingCandidate[];
+    total_candidates: number;
+    ai_summary: string;
+    generated_at: string | null;
+    created_at: string | null;
+}
+
+export interface BriefingHistoryItem {
+    briefing_date: string;
+    total_candidates: number;
+    dart_count: number;
+    ai_summary: string;
+    generated_at: string | null;
+}
+
+export const briefingApi = {
+    getToday: (): Promise<MorningBriefing> =>
+        get('/briefing/today'),
+    getByDate: (date: string): Promise<MorningBriefing> =>
+        get(`/briefing/${date}`),
+    getHistory: (limit = 30): Promise<BriefingHistoryItem[]> =>
+        get(`/briefing/history?limit=${limit}`),
+    generate: (date = '', force = false): Promise<MorningBriefing> =>
+        post('/briefing/generate', { date, force }),
+};
+
+// ── Trade Insights (Pattern Learning) ─────────────────────────
+
+export interface ScoreBucket {
+    label: string;
+    count: number;
+    win_rate: number;
+    avg_pnl: number;
+    total_pnl: number;
+    reliable: boolean;
+}
+
+export interface PresurgeStats {
+    count: number;
+    win_rate: number;
+    avg_pnl: number;
+    total_pnl: number;
+}
+
+export interface ExitReasonStat {
+    reason: string;
+    count: number;
+    win_rate: number;
+    avg_pnl: number;
+    total_pnl: number;
+}
+
+export interface TimeSlot {
+    hour: number;
+    label: string;
+    count: number;
+    win_rate: number;
+    avg_pnl: number;
+}
+
+export interface HoldingBucket {
+    label: string;
+    count: number;
+    win_rate: number;
+    avg_pnl: number;
+    total_pnl: number;
+    reliable: boolean;
+}
+
+export interface Recommendation {
+    param: string;
+    current: number | string | boolean | null;
+    suggested: number | string | boolean | null;
+    reason: string;
+    confidence: 'high' | 'medium' | 'low' | 'info';
+}
+
+export interface TradeAnalysis {
+    source: string;
+    data_quality: 'sufficient' | 'limited' | 'insufficient';
+    total_trades: number;
+    win_count: number;
+    loss_count: number;
+    win_rate: number;
+    avg_pnl_pct: number;
+    total_pnl: number;
+    avg_holding_hours: number;
+    score_analysis: { buckets: ScoreBucket[]; insight: string };
+    presurge_analysis: { presurge: PresurgeStats; normal: PresurgeStats; insight: string } | Record<string, never>;
+    exit_analysis: ExitReasonStat[];
+    time_analysis: TimeSlot[];
+    holding_analysis: HoldingBucket[];
+    recommendations: Recommendation[];
+    ai_narrative: string;
+    analyzed_at: string;
+    message?: string;
+}
+
+export const insightsApi = {
+    getTradeAnalysis: (source: 'all' | 'live' | 'paper' = 'all'): Promise<TradeAnalysis> =>
+        get(`/insights/trade-analysis?source=${source}`),
+    applyRecommendation: (param: string, value: number | string, target: 'live' | 'paper' = 'live'): Promise<{ success: boolean; message: string }> =>
+        post(`/insights/apply-recommendation?param=${encodeURIComponent(param)}&value=${encodeURIComponent(String(value))}&target=${target}`, {}),
+};

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2, BookOpen, Star, Flame } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2, BookOpen, Star, Flame, Sunrise } from 'lucide-react';
 import type { Market, LogEntry, MonitorStatus } from './lib/api';
 import { scanSignals, monitor } from './lib/api';
 
@@ -12,8 +12,9 @@ import PaperTradingDashboard from './pages/PaperTradingDashboard';
 import InvestmentJournalDashboard from './pages/InvestmentJournalDashboard';
 import WatchlistDashboard from './pages/WatchlistDashboard';
 import LiveTradingDashboard from './pages/LiveTradingDashboard';
+import MorningBriefingDashboard from './pages/MorningBriefingDashboard';
 
-type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper' | 'journal' | 'watchlist' | 'live';
+type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper' | 'journal' | 'watchlist' | 'live' | 'briefing';
 
 export type PriceFilter = 'all' | 'penny' | 'range';
 
@@ -256,6 +257,7 @@ function App() {
         { id: 'journal' as Tab, label: '투자일지', icon: BookOpen, color: 'text-amber-400' },
         { id: 'watchlist' as Tab, label: '관심종목', icon: Star, color: 'text-yellow-400' },
         { id: 'live' as Tab, label: '실전매매', icon: Flame, color: 'text-red-400' },
+        { id: 'briefing' as Tab, label: '장전브리핑', icon: Sunrise, color: 'text-amber-400' },
     ];
 
     return (
@@ -610,6 +612,16 @@ function App() {
                 </div>
                 <div className={`h-full ${activeTab === 'live' ? '' : 'hidden'}`}>
                     <LiveTradingDashboard isVisible={activeTab === 'live'} />
+                </div>
+                <div className={`h-full ${activeTab === 'briefing' ? '' : 'hidden'}`}>
+                    <MorningBriefingDashboard
+                        isVisible={activeTab === 'briefing'}
+                        onNavigateToStock={(name: string) => {
+                            setActiveTab('stocks');
+                            setStockNameInput(name);
+                            setStockFilter(f => ({ ...f, stockName: name }));
+                        }}
+                    />
                 </div>
             </main>
 

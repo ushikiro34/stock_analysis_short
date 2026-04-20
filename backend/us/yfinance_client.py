@@ -57,6 +57,11 @@ async def get_us_surge_stocks(limit: int = 100) -> list[dict]:
             if price <= 0:
                 continue
 
+            # 6자리 순수 숫자 코드는 한국 KOSDAQ/KOSPI 종목 — US 스크리너 결과에서 제외
+            if symbol.isdigit() and len(symbol) == 6:
+                logger.debug(f"Skipping KR-format code from US screener: {symbol}")
+                continue
+
             stocks.append({
                 "code": symbol,
                 "name": name,

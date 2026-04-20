@@ -153,3 +153,28 @@ class LiveDailyReport(Base):
     trades_json         = Column(Text, nullable=True)       # JSON snapshot of that day's trades
     ai_summary          = Column(Text, nullable=True)       # AI 분석 텍스트
     created_at          = Column(TIMESTAMP)
+
+
+# ── Morning Briefing ───────────────────────────────────────────
+
+class MorningBriefing(Base):
+    """장전 브리핑 — 공시/뉴스/테마 3개 레이어 분석 결과"""
+    __tablename__ = "morning_briefings"
+    id                   = Column(Integer, primary_key=True, autoincrement=True)
+    briefing_date        = Column(String(10), unique=True)    # YYYY-MM-DD (KST)
+    # Layer 1: DART 공시
+    dart_items_json      = Column(Text, nullable=True)        # JSON: List[DartItem]
+    dart_count           = Column(Integer, default=0)
+    # Layer 2: 뉴스 + LLM
+    news_items_json      = Column(Text, nullable=True)        # JSON: List[{title, link, source}]
+    llm_candidates_json  = Column(Text, nullable=True)        # JSON: List[Candidate] from LLM
+    # Layer 3: 테마 매핑
+    themes_detected_json = Column(Text, nullable=True)        # JSON: {theme_name: [codes]}
+    theme_stocks_json    = Column(Text, nullable=True)        # JSON: List[Candidate] from theme
+    # 통합 출력
+    all_candidates_json  = Column(Text, nullable=True)        # JSON: merged+deduped List[Candidate]
+    total_candidates     = Column(Integer, default=0)
+    # AI 요약
+    ai_summary           = Column(Text, nullable=True)
+    generated_at         = Column(TIMESTAMP)
+    created_at           = Column(TIMESTAMP)

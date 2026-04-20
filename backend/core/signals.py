@@ -1168,6 +1168,159 @@ class PricePatternSignal:
         result["score"] = min(score, 60)
         return result
 
+    # ──────────────────────────────────────────────────────────────
+    # 캔들 해부 + 거래량 조합 분석 (Candle-Volume Analysis)
+    # ──────────────────────────────────────────────────────────────
+
+    def detect_candle_volume_resistance(self, ohlcv_data: pd.DataFrame,
+                                         lookback: int = 10) -> Dict:
+        """저항 캔들 식별 + 버팀 진입 신호 감지
+
+        이미지 기반 로직:
+          ① 윗꼬리 비율 높은 캔들 + 강한 거래량 = 저항 구간 (상방 힘 부족)
+          ② 밑꼬리 + 긴 몸통(버팀) 캔들에서 저항 거래량 돌파 = 진입 신호
+          ⑤ 저항 거래량 미달 상태로 저항가 근처 도달 = 익절/관망 신호
+
+        Returns:
+            {
+                "resistance_candles": [{"index": int, "price": float, "volume": float,
+                                        "upper_shadow_ratio": float}],
+                "max_resistance_volume": float,   # 저항 캔들 중 최대 거래량 (기준값)
+                "resistance_price": float,        # 저항 가격대
+                "entry_signal": bool,             # 버팀 캔들 + 저항 거래량 돌파 여부
+                "entry_strength": str,            # "strong" | "normal" | "none"
+                "fake_breakout_risk": bool,       # 저항가 근처 but 거래량 미달
+                "score": int,
+                "reasons": list,
+            }
+        """
+        result = {
+            "resistance_candles": [],
+            "max_resistance_volume": 0.0,
+            "resistance_price": 0.0,
+            "entry_signal": False,
+            "entry_strength": "none",
+            "fake_breakout_risk": False,
+            "score": 0,
+            "reasons": [],
+        }
+
+        if len(ohlcv_data) < max(lookback + 2, 10):
+            return result
+
+        # 현재 캔들 (진입 판단 대상)
+        cur = ohlcv_data.iloc[-1]
+        cur_o = float(cur["Open"])
+        cur_h = float(cur["High"])
+        cur_l = float(cur["Low"])
+        cur_c = float(cur["Close"])
+        cur_v = float(cur["Volume"])
+
+        cur_range = cur_h - cur_l
+        if cur_range <= 0:
+            return result
+
+        # 현재 캔들 해부
+        cur_body      = abs(cur_c - cur_o)
+        cur_upper     = cur_h - max(cur_o, cur_c)
+        cur_lower     = min(cur_o, cur_c) - cur_l
+        cur_body_r    = cur_body / cur_range          # 몸통 비율
+        cur_upper_r   = cur_upper / cur_range         # 윗꼬리 비율
+        cur_lower_r   = cur_lower / cur_range         # 밑꼬리 비율
+        cur_is_bull   = cur_c > cur_o                 # 양봉 여부
+
+        # 거래량 기준: 직전 lookback일 평균
+        window = ohlcv_data.iloc[-(lookback + 1):-1]
+        vol_avg = float(window["Volume"].mean()) if len(window) > 0 else 1.0
+
+        # ── ① 저항 캔들 탐색 (lookback 봉 내에서) ──────────────────
+        resistance_candles = []
+        for i in range(-(lookback + 1), -1):
+            row = ohlcv_data.iloc[i]
+            o, h, l, c, v = float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"]), float(row["Volume"])
+            rng = h - l
+            if rng <= 0 or v <= 0:
+                continue
+            upper = h - max(o, c)
+            body  = abs(c - o)
+            upper_r = upper / rng
+            body_r  = body / rng
+
+            # 저항 캔들 조건: 윗꼬리 비율 40% 이상 + 거래량 평균 이상
+            if upper_r >= 0.40 and v >= vol_avg * 0.8:
+                resistance_candles.append({
+                    "index": i,
+                    "price": float(h),            # 저항 고점
+                    "close": float(c),
+                    "volume": float(v),
+                    "upper_shadow_ratio": round(upper_r, 3),
+                    "body_ratio": round(body_r, 3),
+                })
+
+        result["resistance_candles"] = resistance_candles
+
+        if not resistance_candles:
+            # 저항 캔들 없음 → 캔들 해부 스코어만 부여
+            if cur_is_bull and cur_lower_r >= 0.25 and cur_body_r >= 0.35:
+                result["reasons"].append(
+                    f"버팀 양봉 확인 (몸통 {cur_body_r:.0%}, 밑꼬리 {cur_lower_r:.0%})"
+                )
+                result["entry_signal"] = True
+                result["entry_strength"] = "normal"
+                result["score"] = 20
+            return result
+
+        # 최대 저항 거래량 + 저항 가격
+        max_res_vol   = max(rc["volume"] for rc in resistance_candles)
+        res_price_ref = max(rc["price"]  for rc in resistance_candles)
+        result["max_resistance_volume"] = max_res_vol
+        result["resistance_price"]      = res_price_ref
+
+        # ── ⑤ 가짜 돌파 위험: 현재가가 저항가 ±3% 내인데 거래량 미달 ──
+        near_resistance = abs(cur_c - res_price_ref) / res_price_ref < 0.03
+        vol_below_resistance = cur_v < max_res_vol * 0.8
+
+        if near_resistance and vol_below_resistance:
+            result["fake_breakout_risk"] = True
+            result["reasons"].append(
+                f"[가짜돌파 위험] 저항가 {res_price_ref:,.0f} 근처 + "
+                f"거래량 미달 ({cur_v/max_res_vol:.1%})"
+            )
+            result["score"] = -15   # 페널티
+
+        # ── ② 버팀 진입 신호: 밑꼬리+긴몸통 양봉 + 저항 거래량 돌파 ──
+        is_persistence_candle = (
+            cur_is_bull
+            and cur_lower_r >= 0.25    # 밑꼬리 25% 이상 (버팀)
+            and cur_body_r  >= 0.35    # 몸통 35% 이상 (결정력)
+        )
+
+        if is_persistence_candle:
+            vol_vs_resistance = cur_v / max_res_vol if max_res_vol > 0 else 0
+            if vol_vs_resistance >= 1.0:
+                result["entry_signal"] = True
+                result["entry_strength"] = "strong" if vol_vs_resistance >= 1.3 else "normal"
+                result["reasons"].append(
+                    f"버팀 양봉 + 저항 거래량 돌파 "
+                    f"({vol_vs_resistance:.1%}, 저항가 {res_price_ref:,.0f})"
+                )
+                result["score"] = max(result["score"], 0) + (40 if result["entry_strength"] == "strong" else 25)
+            elif vol_vs_resistance >= 0.7:
+                result["entry_signal"] = False
+                result["entry_strength"] = "none"
+                result["reasons"].append(
+                    f"버팀 양봉 but 저항 거래량 미달 ({vol_vs_resistance:.1%}) — 관망"
+                )
+                result["score"] = max(result["score"], 0) + 10
+        elif cur_upper_r >= 0.50:
+            result["reasons"].append(
+                f"[저항] 윗꼬리 강한 캔들 ({cur_upper_r:.0%}) + "
+                f"거래량 {cur_v/vol_avg:.1f}배 — 관망"
+            )
+            result["score"] = max(result["score"], 0) - 10  # 음수 방지 후 감점
+
+        return result
+
     def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
         """가격 패턴 신호 체크 (눌림목 포함)"""
         if len(ohlcv_data) < 15:
@@ -1193,7 +1346,7 @@ class PricePatternSignal:
         pullback_result = self.detect_pullback(ohlcv_data)
 
         if pullback_result["is_reversal_risk"]:
-            # 추세전환 위험이 있으면 HOLD 신호 (단, pre_surge는 포함)
+            # 추세전환 위험이 있으면 HOLD 신호 (단, pre_surge / candle_volume은 포함)
             return {
                 "signal": SignalType.HOLD,
                 "strength": SignalStrength.LOW,
@@ -1201,6 +1354,7 @@ class PricePatternSignal:
                 "reasons": pullback_result["reasons"],
                 "pullback": pullback_result,
                 "pre_surge": pre_surge_info,
+                "candle_volume": self.detect_candle_volume_resistance(ohlcv_data),
             }
 
         if pullback_result["is_pullback"]:
@@ -1248,6 +1402,23 @@ class PricePatternSignal:
             reasons.extend(["🗜️ 에너지 압축 횡보"] + tight_result["reasons"])
             score += tight_result["score"]
 
+        # ── 패턴 9: 캔들 해부 + 거래량 조합 분석 ──────────────────────
+        candle_vol_result = self.detect_candle_volume_resistance(ohlcv_data)
+
+        if candle_vol_result["fake_breakout_risk"]:
+            # 가짜 돌파 위험 → 점수 감점 + 이유 기록
+            reasons.extend(candle_vol_result["reasons"])
+            score = max(0, score + candle_vol_result["score"])  # score는 음수일 수 있음
+
+        elif candle_vol_result["entry_signal"]:
+            # 버팀 진입 신호 → 점수 가산
+            reasons.extend(["🕯️ 캔들 버팀 진입"] + candle_vol_result["reasons"])
+            score += candle_vol_result["score"]
+
+        elif candle_vol_result["reasons"]:
+            # 관망 이유만 기록 (점수 미반영)
+            reasons.extend(candle_vol_result["reasons"])
+
         # 신호 강도 결정
         if score >= 70:
             strength = SignalStrength.HIGH
@@ -1277,6 +1448,9 @@ class PricePatternSignal:
         # 급등 전 시그널 별도 필드
         result["pre_surge"] = pre_surge_info
 
+        # 캔들+거래량 분석 결과 별도 필드 (저항 거래량 → 2순위 익절에 활용)
+        result["candle_volume"] = candle_vol_result
+
         return result
 
 
@@ -1302,7 +1476,7 @@ class TakeProfitStrategy:
         ]
         self.executed_targets = set()
 
-    def check_exit(self, current_price: float, position_size: float = 1.0) -> Tuple[bool, Optional[Dict]]:
+    def check_exit(self, current_price: float, _position_size: float = 1.0) -> Tuple[bool, Optional[Dict]]:
         """
         익절 조건 체크
 
@@ -1916,6 +2090,17 @@ class MinuteBreakoutSignal:
             reasons.append(f"눌림목 반등 구간 (고점 대비 {from_high_pct:.1f}%)")
             score += 15
 
+        # ── 6. 분봉 캔들 해부 + 저항 거래량 분석 ────────────────────────
+        candle_vol_result = self._analyze_candle_volume(candles, lookback_n=10)
+        if candle_vol_result["fake_breakout_risk"]:
+            reasons.extend(candle_vol_result["reasons"])
+            score = max(0, score - 20)
+        elif candle_vol_result["entry_signal"]:
+            reasons.extend(["🕯️ 분봉 버팀 진입"] + candle_vol_result["reasons"])
+            score += candle_vol_result["score"]
+        elif candle_vol_result["reasons"]:
+            reasons.extend(candle_vol_result["reasons"])
+
         signal = SignalType.BUY if score >= 40 else SignalType.HOLD
         if score >= 65:
             strength = SignalStrength.HIGH
@@ -1932,7 +2117,91 @@ class MinuteBreakoutSignal:
             "vol_ratio": round(vol_ratio, 2),
             "intraday_change": round(intraday_change, 2),
             "vwap": round(vwap, 0) if vwap > 0 else None,
+            "candle_volume": candle_vol_result,
         }
+
+    def _analyze_candle_volume(self, candles: list, lookback_n: int = 10) -> Dict:
+        """분봉 리스트 기반 캔들 해부 + 저항 거래량 분석
+
+        candles: [{open, high, low, close, volume}, ...] 형식
+        """
+        result = {
+            "resistance_candles": [],
+            "max_resistance_volume": 0.0,
+            "resistance_price": 0.0,
+            "entry_signal": False,
+            "entry_strength": "none",
+            "fake_breakout_risk": False,
+            "score": 0,
+            "reasons": [],
+        }
+
+        if len(candles) < lookback_n + 2:
+            return result
+
+        cur = candles[-1]
+        cur_o = float(cur["open"])
+        cur_h = float(cur["high"])
+        cur_l = float(cur["low"])
+        cur_c = float(cur["close"])
+        cur_v = float(cur["volume"])
+
+        cur_range = cur_h - cur_l
+        if cur_range <= 0:
+            return result
+
+        cur_body_r  = abs(cur_c - cur_o) / cur_range
+        cur_lower_r = (min(cur_o, cur_c) - cur_l) / cur_range
+        cur_is_bull = cur_c > cur_o
+
+        window = candles[-(lookback_n + 1):-1]
+        vol_avg = sum(c["volume"] for c in window) / len(window) if window else 1.0
+
+        # 저항 캔들 탐색
+        resistance_candles = []
+        for c in window:
+            o, h, l, cl, v = float(c["open"]), float(c["high"]), float(c["low"]), float(c["close"]), float(c["volume"])
+            rng = h - l
+            if rng <= 0 or v <= 0:
+                continue
+            upper_r = (h - max(o, cl)) / rng
+            if upper_r >= 0.40 and v >= vol_avg * 0.8:
+                resistance_candles.append({"price": h, "volume": v, "upper_shadow_ratio": upper_r})
+
+        if not resistance_candles:
+            if cur_is_bull and cur_lower_r >= 0.25 and cur_body_r >= 0.35:
+                result["entry_signal"] = True
+                result["entry_strength"] = "normal"
+                result["reasons"].append(f"분봉 버팀 양봉 (몸통 {cur_body_r:.0%}, 밑꼬리 {cur_lower_r:.0%})")
+                result["score"] = 15
+            return result
+
+        max_res_vol   = max(rc["volume"] for rc in resistance_candles)
+        res_price_ref = max(rc["price"]  for rc in resistance_candles)
+        result["max_resistance_volume"] = max_res_vol
+        result["resistance_price"] = res_price_ref
+
+        near_resistance = abs(cur_c - res_price_ref) / res_price_ref < 0.02
+        vol_below = cur_v < max_res_vol * 0.8
+
+        if near_resistance and vol_below:
+            result["fake_breakout_risk"] = True
+            result["reasons"].append(
+                f"[분봉 가짜돌파] 저항가 {res_price_ref:,} 근처 + 거래량 미달 ({cur_v/max_res_vol:.1%})"
+            )
+            return result
+
+        if cur_is_bull and cur_lower_r >= 0.25 and cur_body_r >= 0.35:
+            vol_vs_res = cur_v / max_res_vol if max_res_vol > 0 else 0
+            if vol_vs_res >= 1.0:
+                result["entry_signal"] = True
+                result["entry_strength"] = "strong" if vol_vs_res >= 1.3 else "normal"
+                result["reasons"].append(
+                    f"분봉 버팀 양봉 + 저항 거래량 돌파 ({vol_vs_res:.1%})"
+                )
+                result["score"] = 25 if result["entry_strength"] == "strong" else 15
+
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════

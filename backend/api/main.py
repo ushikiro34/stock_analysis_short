@@ -24,6 +24,8 @@ from .routers import (
     paper_router,
     monitor_router,
     live_router,
+    briefing_router,
+    insights_router,
 )
 
 # Install in-memory log buffer (captures all log output for /monitor/logs)
@@ -56,6 +58,8 @@ app.include_router(sectors_router)
 app.include_router(paper_router)
 app.include_router(monitor_router)
 app.include_router(live_router)
+app.include_router(briefing_router)
+app.include_router(insights_router)
 
 
 # ── Background Tasks ──────────────────────────────────────────
@@ -142,6 +146,20 @@ async def run_paper_trading():
         await asyncio.sleep(300)
 
 
+async def run_morning_briefing():
+    """08:20~09:00 KST 창에 장전 브리핑 자동 생성 (5분 주기 체크)"""
+    from ..core.morning_briefing import maybe_generate_today_briefing
+    from ..db.session import AsyncSessionLocal
+    await asyncio.sleep(30)
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                await maybe_generate_today_briefing(db)
+        except Exception as e:
+            logger.error(f"Morning briefing error: {e}")
+        await asyncio.sleep(300)
+
+
 async def run_live_trading():
     """5분 주기 실전 매매 루프 + 장 마감 후 일일 리포트 자동 생성"""
     from ..core.live_engine import live_engine
@@ -185,7 +203,8 @@ async def on_startup():
     scorer_task = asyncio.create_task(run_scorer())
     paper_task = asyncio.create_task(run_paper_trading())
     asyncio.create_task(run_live_trading())
-    logger.info(f"Background tasks started: collector, scorer, paper_trading, live_trading")
+    asyncio.create_task(run_morning_briefing())
+    logger.info(f"Background tasks started: collector, scorer, paper_trading, live_trading, morning_briefing")
 
 
 # ── WebSocket ────────────────────────────────────────────────

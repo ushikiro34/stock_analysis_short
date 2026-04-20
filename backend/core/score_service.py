@@ -26,6 +26,10 @@ async def _run_sync(fn):
 async def collect_fundamental(code: str, market: str = "KR") -> dict:
     """펀더멘털 데이터 수집 (KR: KIS REST API, US: yfinance)"""
     if market == "US":
+        # 6자리 순수 숫자 코드는 한국 종목 — yfinance 호출 방지
+        if code.isdigit() and len(code) == 6:
+            logger.warning(f"[{code}] KR-format code passed with market=US, skipping yfinance")
+            return {}
         from ..us.yfinance_client import get_us_fundamental
         return await get_us_fundamental(code)
 
@@ -40,6 +44,10 @@ async def collect_fundamental(code: str, market: str = "KR") -> dict:
 async def collect_technical(code: str, market: str = "KR") -> dict:
     """기술적 지표 수집 (KR: pykrx, US: yfinance)"""
     if market == "US":
+        # 6자리 순수 숫자 코드는 한국 종목 — yfinance 호출 방지
+        if code.isdigit() and len(code) == 6:
+            logger.warning(f"[{code}] KR-format code passed with market=US, skipping yfinance")
+            return {}
         from ..us.yfinance_client import get_us_technical
         return await get_us_technical(code)
 

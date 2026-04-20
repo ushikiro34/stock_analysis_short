@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PlayCircle, StopCircle, AlertTriangle, Activity, Shield, Loader2, X, RefreshCw, Zap, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { PlayCircle, StopCircle, AlertTriangle, Activity, Shield, Loader2, X, RefreshCw, Zap, FileText, ChevronDown, ChevronUp, Brain, TrendingUp, Clock, Target, CheckCircle2, AlertCircle } from 'lucide-react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
 import {
-    liveTrading,
+    liveTrading, insightsApi,
     type LiveStatus, type LivePosition, type LiveTradesResponse,
     type LiveHistoryPoint, type LiveBalance, type LiveStartConfig,
-    type LiveDailyReport,
+    type LiveDailyReport, type TradeAnalysis, type Recommendation, type PresurgeStats,
 } from '../lib/api';
 
 const REFRESH_INTERVAL = 30_000;
@@ -183,6 +183,341 @@ function PortfolioChart({ history }: { history: LiveHistoryPoint[] }) {
     return <div ref={chartRef} />;
 }
 
+// ── Insights Tab ───────────────────────────────────────────────
+
+interface InsightsTabProps {
+    analysis: TradeAnalysis | null;
+    source: 'all' | 'live' | 'paper';
+    loading: boolean;
+    error: string | null;
+    applyingParam: string | null;
+    onSourceChange: (s: 'all' | 'live' | 'paper') => void;
+    onRefresh: () => void;
+    onApply: (rec: Recommendation) => void;
+}
+
+const confidenceColor = (c: string) =>
+    c === 'high' ? 'text-green-400 border-green-400/40 bg-green-400/10'
+    : c === 'medium' ? 'text-yellow-400 border-yellow-400/40 bg-yellow-400/10'
+    : 'text-slate-400 border-slate-600 bg-slate-800/40';
+
+const qualityBadge = (q: string) =>
+    q === 'sufficient' ? 'text-green-400 bg-green-400/10 border-green-400/30'
+    : q === 'limited' ? 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30'
+    : 'text-red-400 bg-red-400/10 border-red-400/30';
+
+const qualityLabel = (q: string) =>
+    q === 'sufficient' ? '데이터 충분' : q === 'limited' ? '데이터 부족' : '데이터 없음';
+
+function InsightsTab({ analysis, source, loading, error, applyingParam, onSourceChange, onRefresh, onApply }: InsightsTabProps) {
+    return (
+        <div className="space-y-4">
+            {/* 상단 컨트롤 */}
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <Brain size={16} className="text-purple-400" />
+                    <span className="text-sm font-medium text-slate-300">거래 패턴 학습 분석</span>
+                    {analysis && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full border ${qualityBadge(analysis.data_quality)}`}>
+                            {qualityLabel(analysis.data_quality)}
+                        </span>
+                    )}
+                </div>
+                <div className="flex items-center gap-2">
+                    {/* 소스 선택 */}
+                    <div className="flex bg-slate-800 rounded-lg border border-slate-700 overflow-hidden text-xs">
+                        {(['all', 'live', 'paper'] as const).map(s => (
+                            <button
+                                key={s}
+                                onClick={() => onSourceChange(s)}
+                                className={`px-3 py-1.5 transition-colors ${source === s ? 'bg-primary text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                            >
+                                {s === 'all' ? '전체' : s === 'live' ? '실전' : '페이퍼'}
+                            </button>
+                        ))}
+                    </div>
+                    <button
+                        onClick={onRefresh}
+                        disabled={loading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded-lg text-xs transition-colors"
+                    >
+                        {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                        분석
+                    </button>
+                </div>
+            </div>
+
+            {/* 에러 */}
+            {error && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-400 flex items-center gap-2">
+                    <AlertCircle size={14} /> {error}
+                </div>
+            )}
+
+            {/* 로딩 */}
+            {loading && !analysis && (
+                <div className="flex flex-col items-center justify-center h-32 text-slate-500">
+                    <Loader2 size={28} className="animate-spin mb-2" />
+                    <p className="text-sm">거래 패턴 분석 중...</p>
+                </div>
+            )}
+
+            {/* 데이터 없음 안내 */}
+            {!loading && !analysis && !error && (
+                <div className="flex flex-col items-center justify-center h-32 text-slate-600">
+                    <Brain size={28} className="mb-2" />
+                    <p className="text-sm">위 [분석] 버튼을 클릭하여 거래 패턴을 분석하세요</p>
+                </div>
+            )}
+
+            {analysis && (
+                <>
+                    {/* 거래 없음 메시지 */}
+                    {analysis.total_trades === 0 && (
+                        <div className="flex flex-col items-center justify-center h-24 text-slate-600">
+                            <p className="text-sm">{analysis.message ?? '청산된 거래 없음'}</p>
+                        </div>
+                    )}
+
+                    {analysis.total_trades > 0 && (
+                        <>
+                            {/* 전체 통계 요약 */}
+                            <div className="grid grid-cols-4 gap-3">
+                                {[
+                                    { label: '총 거래', value: `${analysis.total_trades}건`, icon: <FileText size={14} /> },
+                                    { label: '승률', value: `${analysis.win_rate.toFixed(1)}%`, color: analysis.win_rate >= 50 ? 'text-green-400' : 'text-red-400', icon: <Target size={14} /> },
+                                    { label: '평균 수익률', value: `${analysis.avg_pnl_pct >= 0 ? '+' : ''}${analysis.avg_pnl_pct.toFixed(2)}%`, color: analysis.avg_pnl_pct >= 0 ? 'text-green-400' : 'text-red-400', icon: <TrendingUp size={14} /> },
+                                    { label: '누적 손익', value: `${analysis.total_pnl >= 0 ? '+' : ''}${analysis.total_pnl.toLocaleString()}원`, color: analysis.total_pnl >= 0 ? 'text-green-400' : 'text-red-400', icon: <Activity size={14} /> },
+                                ].map(item => (
+                                    <div key={item.label} className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3">
+                                        <div className="flex items-center gap-1.5 text-slate-500 text-xs mb-1">
+                                            {item.icon} {item.label}
+                                        </div>
+                                        <div className={`text-lg font-bold font-mono ${item.color ?? 'text-white'}`}>{item.value}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* 점수 구간별 성과 */}
+                            {analysis.score_analysis?.buckets?.length > 0 && (
+                                <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                                            <Target size={13} /> 점수 구간별 성과
+                                        </div>
+                                        {analysis.score_analysis.insight && (
+                                            <div className="text-[10px] text-slate-500 max-w-[60%] text-right">{analysis.score_analysis.insight}</div>
+                                        )}
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-xs">
+                                            <thead>
+                                                <tr className="text-slate-500 border-b border-slate-700">
+                                                    <th className="text-left pb-2">구간</th>
+                                                    <th className="text-right pb-2">거래수</th>
+                                                    <th className="text-right pb-2">승률</th>
+                                                    <th className="text-right pb-2">평균수익률</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-700/40">
+                                                {analysis.score_analysis.buckets.map(b => (
+                                                    <tr key={b.label} className={`${!b.reliable ? 'opacity-50' : ''}`}>
+                                                        <td className="py-1.5 font-mono text-slate-300">{b.label}</td>
+                                                        <td className="text-right text-slate-400">
+                                                            {b.count}
+                                                            {!b.reliable && <span className="ml-1 text-yellow-500 text-[10px]">*</span>}
+                                                        </td>
+                                                        <td className={`text-right font-medium ${b.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}`}>{b.win_rate.toFixed(0)}%</td>
+                                                        <td className={`text-right font-mono ${b.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                            {b.avg_pnl >= 0 ? '+' : ''}{b.avg_pnl.toFixed(2)}%
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        <div className="text-[10px] text-slate-600 mt-1">* 샘플 부족 (신뢰도 낮음)</div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 급등전 vs 일반 비교 */}
+                            {'presurge' in (analysis.presurge_analysis ?? {}) && (
+                                <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4">
+                                    <div className="text-xs font-medium text-slate-400 mb-3 flex items-center gap-1.5">
+                                        <Zap size={13} /> 급등전 신호 vs 일반 거래 비교
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {([
+                                            { label: '급등전 신호', data: (analysis.presurge_analysis as any).presurge as PresurgeStats, border: 'border-amber-500/20', text: 'text-amber-400' },
+                                            { label: '일반 거래', data: (analysis.presurge_analysis as any).normal as PresurgeStats, border: 'border-blue-500/20', text: 'text-blue-400' },
+                                        ]).map(({ label, data, border, text }) => (
+                                            <div key={label} className={`border ${border} rounded-lg p-3`}>
+                                                <div className={`text-xs font-medium ${text} mb-2`}>{label}</div>
+                                                <div className="space-y-1 text-xs">
+                                                    <div className="flex justify-between text-slate-400">
+                                                        <span>거래수</span><span className="text-slate-200">{data.count}건</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-slate-400">
+                                                        <span>승률</span>
+                                                        <span className={data.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}>{data.win_rate.toFixed(1)}%</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-slate-400">
+                                                        <span>평균수익률</span>
+                                                        <span className={`font-mono ${data.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                            {data.avg_pnl >= 0 ? '+' : ''}{data.avg_pnl.toFixed(2)}%
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {(analysis.presurge_analysis as any).insight && (
+                                        <div className="mt-2 text-[10px] text-slate-500">{(analysis.presurge_analysis as any).insight}</div>
+                                    )}
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-4">
+                                {/* 청산 사유 분포 */}
+                                {analysis.exit_analysis.length > 0 && (
+                                    <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4">
+                                        <div className="text-xs font-medium text-slate-400 mb-3 flex items-center gap-1.5">
+                                            <X size={13} /> 청산 사유 분포
+                                        </div>
+                                        <div className="space-y-2">
+                                            {analysis.exit_analysis.map(r => (
+                                                <div key={r.reason} className="flex items-center gap-2">
+                                                    <div className="min-w-[80px] text-xs text-slate-400 truncate">{r.reason || '미분류'}</div>
+                                                    <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                                        <div
+                                                            className={`h-full rounded-full ${r.win_rate >= 50 ? 'bg-green-500' : 'bg-red-500'}`}
+                                                            style={{ width: `${Math.min(100, r.win_rate)}%` }}
+                                                        />
+                                                    </div>
+                                                    <div className="text-xs text-slate-500 min-w-[32px] text-right">{r.count}건</div>
+                                                    <div className={`text-xs min-w-[44px] text-right font-mono ${r.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                        {r.avg_pnl >= 0 ? '+' : ''}{r.avg_pnl.toFixed(1)}%
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 시간대별 성과 */}
+                                {analysis.time_analysis.length > 0 && (
+                                    <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4">
+                                        <div className="text-xs font-medium text-slate-400 mb-3 flex items-center gap-1.5">
+                                            <Clock size={13} /> 시간대별 성과 (KST)
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            {analysis.time_analysis.map(t => (
+                                                <div key={t.hour} className="flex items-center gap-2">
+                                                    <div className="min-w-[40px] text-xs text-slate-500 font-mono">{t.label}</div>
+                                                    <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                                        <div
+                                                            className={`h-full rounded-full ${t.avg_pnl >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
+                                                            style={{ width: `${Math.min(100, Math.abs(t.avg_pnl) * 10)}%` }}
+                                                        />
+                                                    </div>
+                                                    <div className="text-xs text-slate-500 min-w-[30px] text-right">{t.count}건</div>
+                                                    <div className={`text-xs min-w-[44px] text-right font-mono ${t.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                                                        {t.win_rate.toFixed(0)}%승
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 보유 기간별 성과 */}
+                            {analysis.holding_analysis.length > 0 && (
+                                <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4">
+                                    <div className="text-xs font-medium text-slate-400 mb-3 flex items-center gap-1.5">
+                                        <Clock size={13} /> 보유 기간별 성과
+                                    </div>
+                                    <div className="grid grid-cols-5 gap-2">
+                                        {analysis.holding_analysis.map(b => (
+                                            <div key={b.label} className="bg-slate-900/60 rounded-lg p-2.5 text-center">
+                                                <div className="text-[10px] text-slate-500 mb-1 leading-tight">{b.label}</div>
+                                                <div className={`text-sm font-bold ${b.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                                                    {b.win_rate.toFixed(0)}%
+                                                </div>
+                                                <div className={`text-[10px] font-mono mt-0.5 ${b.avg_pnl >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                                                    {b.avg_pnl >= 0 ? '+' : ''}{b.avg_pnl.toFixed(1)}%
+                                                </div>
+                                                <div className="text-[10px] text-slate-600 mt-0.5">{b.count}건</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 파라미터 추천 */}
+                            {analysis.recommendations.length > 0 && (
+                                <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4">
+                                    <div className="text-xs font-medium text-slate-400 mb-3 flex items-center gap-1.5">
+                                        <CheckCircle2 size={13} /> 파라미터 개선 제안
+                                    </div>
+                                    <div className="space-y-2">
+                                        {analysis.recommendations.map(rec => {
+                                            const isApplyable = rec.confidence !== 'info' && rec.suggested != null;
+                                            return (
+                                                <div key={rec.param} className={`border rounded-lg p-3 ${confidenceColor(rec.confidence)}`}>
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-2 mb-1">
+                                                                <span className="font-mono text-xs font-medium">{rec.param}</span>
+                                                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${confidenceColor(rec.confidence)}`}>
+                                                                    {rec.confidence === 'high' ? '신뢰↑' : rec.confidence === 'medium' ? '보통' : rec.confidence === 'low' ? '참고' : '정보'}
+                                                                </span>
+                                                            </div>
+                                                            <div className="text-[11px] text-slate-400 leading-relaxed">{rec.reason}</div>
+                                                            {rec.suggested != null && (
+                                                                <div className="flex items-center gap-2 mt-1.5 text-xs">
+                                                                    <span className="text-slate-500">현재</span>
+                                                                    <span className="font-mono text-slate-300">{rec.current != null ? String(rec.current) : 'N/A'}</span>
+                                                                    <span className="text-slate-600">→</span>
+                                                                    <span className="font-mono font-bold">{String(rec.suggested)}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        {isApplyable && (
+                                                            <button
+                                                                onClick={() => onApply(rec)}
+                                                                disabled={applyingParam === rec.param}
+                                                                className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 bg-primary hover:bg-primary/80 disabled:opacity-40 rounded-lg text-xs font-medium text-white transition-colors"
+                                                            >
+                                                                {applyingParam === rec.param ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+                                                                적용
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* AI 내러티브 */}
+                            {analysis.ai_narrative && (
+                                <div className="bg-slate-800/40 border border-purple-500/20 rounded-xl p-4">
+                                    <div className="text-xs font-medium text-purple-400 mb-2 flex items-center gap-1.5">
+                                        <Brain size={13} /> AI 분석 요약
+                                    </div>
+                                    <div className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{analysis.ai_narrative}</div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </>
+            )}
+        </div>
+    );
+}
+
 interface Props {
     isVisible: boolean;
 }
@@ -197,10 +532,15 @@ export default function LiveTradingDashboard({ isVisible }: Props) {
     const [error, setError] = useState<string | null>(null);
     const [showStartModal, setShowStartModal] = useState(false);
     const [showCloseAllModal, setShowCloseAllModal] = useState(false);
-    const [activeTab, setActiveTab] = useState<'positions' | 'trades' | 'chart' | 'daily'>('positions');
+    const [activeTab, setActiveTab] = useState<'positions' | 'trades' | 'chart' | 'daily' | 'insights'>('positions');
     const [dailyReports, setDailyReports] = useState<LiveDailyReport[]>([]);
     const [generatingReport, setGeneratingReport] = useState(false);
     const [expandedReport, setExpandedReport] = useState<number | null>(null);
+    const [insightsAnalysis, setInsightsAnalysis] = useState<TradeAnalysis | null>(null);
+    const [insightsSource, setInsightsSource] = useState<'all' | 'live' | 'paper'>('all');
+    const [insightsLoading, setInsightsLoading] = useState(false);
+    const [insightsError, setInsightsError] = useState<string | null>(null);
+    const [applyingParam, setApplyingParam] = useState<string | null>(null);
 
     const fetchDailyReports = useCallback(async () => {
         try {
@@ -208,6 +548,18 @@ export default function LiveTradingDashboard({ isVisible }: Props) {
             setDailyReports(reports);
         } catch { /* silent */ }
     }, []);
+
+    const fetchInsights = useCallback(async (src: 'all' | 'live' | 'paper' = insightsSource) => {
+        setInsightsLoading(true);
+        setInsightsError(null);
+        try {
+            const data = await insightsApi.getTradeAnalysis(src);
+            setInsightsAnalysis(data);
+        } catch (e: any) {
+            setInsightsError(e.message ?? '분석 데이터 조회 실패');
+        }
+        setInsightsLoading(false);
+    }, [insightsSource]);
 
     const fetchAll = useCallback(async () => {
         try {
@@ -244,6 +596,13 @@ export default function LiveTradingDashboard({ isVisible }: Props) {
         const iv = setInterval(fetchAll, REFRESH_INTERVAL);
         return () => clearInterval(iv);
     }, [isVisible, fetchAll, fetchDailyReports]);
+
+    // 학습 인사이트 탭 진입 시 자동 로드
+    useEffect(() => {
+        if (activeTab === 'insights' && !insightsAnalysis && !insightsLoading) {
+            fetchInsights(insightsSource);
+        }
+    }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleStart = async (cfg: LiveStartConfig) => {
         setLoading(true);
@@ -423,6 +782,7 @@ export default function LiveTradingDashboard({ isVisible }: Props) {
                         { id: 'trades',    label: '거래 내역' },
                         { id: 'chart',     label: '자산 추이' },
                         { id: 'daily',     label: `일일 분석 (${dailyReports.length})` },
+                        { id: 'insights',  label: '학습 인사이트' },
                     ] as const).map(tab => (
                         <button
                             key={tab.id}
@@ -547,6 +907,32 @@ export default function LiveTradingDashboard({ isVisible }: Props) {
                             <div className="text-xs text-slate-500 mb-3">포트폴리오 총 가치 추이 (KIS 잔고 기준, 5분 간격)</div>
                             <PortfolioChart history={history} />
                         </div>
+                    )}
+
+                    {/* 학습 인사이트 탭 */}
+                    {activeTab === 'insights' && (
+                        <InsightsTab
+                            analysis={insightsAnalysis}
+                            source={insightsSource}
+                            loading={insightsLoading}
+                            error={insightsError}
+                            applyingParam={applyingParam}
+                            onSourceChange={(s) => {
+                                setInsightsSource(s);
+                                fetchInsights(s);
+                            }}
+                            onRefresh={() => fetchInsights(insightsSource)}
+                            onApply={async (rec) => {
+                                setApplyingParam(rec.param);
+                                try {
+                                    await insightsApi.applyRecommendation(rec.param, rec.suggested as number | string, 'live');
+                                    await fetchInsights(insightsSource);
+                                } catch (e: any) {
+                                    setInsightsError(e.message ?? '적용 실패');
+                                }
+                                setApplyingParam(null);
+                            }}
+                        />
                     )}
 
                     {/* 일일 분석 탭 */}

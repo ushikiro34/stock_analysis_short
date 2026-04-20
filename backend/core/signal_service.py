@@ -452,10 +452,11 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
         sector_data=sector_data,
     )
 
-    # 컵앤핸들 감지 여부 추출 (combined → breakdown.pattern, pattern → 직접)
+    # 컵앤핸들 / 캔들-거래량 결과 추출 (combined → breakdown.pattern, pattern → 직접)
     pattern_result = result.get("breakdown", {}).get("pattern") or result
     cup_handle_data = pattern_result.get("cup_handle", {})
     cup_handle_confirmed = bool(cup_handle_data.get("is_cup_handle", False))
+    candle_volume_data = pattern_result.get("candle_volume", {})
 
     # 진입 시점 ATR 계산 — 손절가 사전 안내용 (entry-time 고정)
     entry_atr = None
@@ -481,6 +482,7 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
         "breakdown": result.get("breakdown", {}),
         "cup_handle_confirmed": cup_handle_confirmed,
         "cup_handle": cup_handle_data if cup_handle_data else None,
+        "candle_volume": candle_volume_data if candle_volume_data else None,
         # ATR 기반 동적 손절 사전 안내
         "atr": round(entry_atr, 0) if entry_atr else None,
         "atr_stop_price": entry_atr_stop,
@@ -707,7 +709,7 @@ async def scan_pre_surge_stocks(market: str = "KR", limit: int = 80) -> List[Dic
                     return None
 
                 result = scanner.check_signal(ohlcv)
-                pre = result.get("breakdown", {}).get("pattern", {}).get("pre_surge")
+                pre = result.get("pre_surge")
                 if not pre:
                     return None
 

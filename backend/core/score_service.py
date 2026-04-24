@@ -106,7 +106,8 @@ async def collect_technical(code: str, market: str = "KR") -> dict:
 # ── In-memory score cache ─────────────────────────────────────
 # key: "MARKET:CODE", value: {"result": {...}, "ts": float}
 _score_cache: dict = {}
-_SCORE_TTL = 600  # 10분
+_SCORE_TTL       = 600   # 10분 (정상 결과)
+_SCORE_TTL_EMPTY = 60    # 1분  (fundamental 빈 결과 — 임시 오류 가능성)
 
 
 async def calculate_score(code: str, market: str = "KR") -> dict | None:
@@ -115,7 +116,7 @@ async def calculate_score(code: str, market: str = "KR") -> dict | None:
 
     cache_key = f"{market}:{code}"
     cached = _score_cache.get(cache_key)
-    if cached and time.time() - cached["ts"] < _SCORE_TTL:
+    if cached and time.time() - cached["ts"] < cached.get("ttl", _SCORE_TTL):
         return cached["result"]
 
     fundamental = await collect_fundamental(code, market)
@@ -144,8 +145,9 @@ async def calculate_score(code: str, market: str = "KR") -> dict | None:
         "technical": technical,
     }
 
-    _score_cache[cache_key] = {"result": result, "ts": time.time()}
-    logger.info(f"[{code}] Score calculated: total={total} (V{value} T{trend} S{stability} R-{risk})")
+    ttl = _SCORE_TTL_EMPTY if not fundamental else _SCORE_TTL
+    _score_cache[cache_key] = {"result": result, "ts": time.time(), "ttl": ttl}
+    logger.info(f"[{code}] Score calculated: total={total} (V{value} T{trend} S{stability} R-{risk}) [cache TTL={ttl}s]")
     return result
 
 

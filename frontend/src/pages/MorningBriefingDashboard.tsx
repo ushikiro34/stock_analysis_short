@@ -87,8 +87,7 @@ function StockInfoModal({ code, name, onClose, onNavigateToStock }: StockModalPr
     };
 
     const handleGoToStock = () => {
-        const stockName = data?.name || name;
-        onNavigateToStock?.(stockName);
+        onNavigateToStock?.(code);
         onClose();
     };
 

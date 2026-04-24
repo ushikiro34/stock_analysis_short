@@ -108,7 +108,8 @@ async def analyze_stock(code: str, market: str = "KR"):
                 "종가": "Close", "거래량": "Volume"
             })[["Open", "High", "Low", "Close", "Volume"]]
             # 종목명
-            name = pykrx_stock.get_market_ticker_name(code) or code
+            _ticker_name = pykrx_stock.get_market_ticker_name(code)
+            name = _ticker_name if isinstance(_ticker_name, str) and _ticker_name else code
         else:
             ohlcv = await collect_ohlcv_data(code, market, 300)
             if ohlcv.empty:

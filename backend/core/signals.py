@@ -72,20 +72,20 @@ class VolumeBreakoutSignal:
         score = 0
 
         # 조건 1: 거래량 급증 (전일 대비)
-        volume_surge = current_volume >= prev_volume * self.volume_surge_ratio
+        volume_surge = prev_volume > 0 and current_volume >= prev_volume * self.volume_surge_ratio
         if volume_surge:
             reasons.append(f"거래량 급증 ({current_volume / prev_volume:.2f}배)")
             score += 30
 
         # 조건 2: 가격 상승
-        price_increase = current_price > prev_close * (1 + self.price_increase_ratio)
+        price_increase = prev_close > 0 and current_price > prev_close * (1 + self.price_increase_ratio)
         if price_increase:
             change_pct = (current_price - prev_close) / prev_close * 100
             reasons.append(f"가격 상승 (+{change_pct:.2f}%)")
             score += 25
 
         # 조건 3: 거래량 MA5 대비 급증
-        volume_ma5_breakout = current_volume >= volume_ma5 * 3
+        volume_ma5_breakout = volume_ma5 > 0 and current_volume >= volume_ma5 * 3
         if volume_ma5_breakout:
             reasons.append(f"거래량 MA5 돌파 ({current_volume / volume_ma5:.2f}배)")
             score += 25
@@ -334,7 +334,7 @@ class RSIGoldenCrossSignal:
 
         # 조건 1: 골든크로스 확인 (MA50 > MA200)
         if current_ma50 > current_ma200:
-            golden_cross_pct = (current_ma50 - current_ma200) / current_ma200 * 100
+            golden_cross_pct = (current_ma50 - current_ma200) / current_ma200 * 100 if current_ma200 > 0 else 0.0
             reasons.append(f"골든크로스 유지 (MA50 > MA200, +{golden_cross_pct:.2f}%)")
             score += 40
 
@@ -410,13 +410,13 @@ class RSIGoldenCrossSignal:
         # 4. MA50 상승 추세 확인
         if len(ma50) > 5:
             ma50_5days_ago = ma50.iloc[-6]
-            if current_ma50 > ma50_5days_ago:
+            if current_ma50 > ma50_5days_ago and ma50_5days_ago > 0:
                 ma50_trend = (current_ma50 - ma50_5days_ago) / ma50_5days_ago * 100
                 reasons.append(f"MA50 상승 추세 (+{ma50_trend:.2f}% 5일)")
                 score += 10
 
         # 5. 현재 가격 위치 확인
-        if current_price > current_ma50:
+        if current_price > current_ma50 and current_ma50 > 0:
             price_above_ma50 = (current_price - current_ma50) / current_ma50 * 100
             reasons.append(f"가격 MA50 상단 (+{price_above_ma50:.2f}%)")
             score += 5
@@ -593,7 +593,7 @@ class PricePatternSignal:
             fib_label = "38.2%" if near_fib382 else "50.0%"
             reasons.append(f"피보나치 {fib_label} 지지 구간 접촉")
             score += 40
-        elif near_ma20:
+        elif near_ma20 and current_ma20 > 0:
             dist = abs(current_price - current_ma20) / current_ma20 * 100
             reasons.append(f"MA20 지지선 터치 (거리: {dist:.1f}%)")
             score += 25
@@ -665,6 +665,8 @@ class PricePatternSignal:
         # 횡보 구간의 고가/저가 범위
         consolidation_high = consolidation["High"].max()
         consolidation_low = consolidation["Low"].min()
+        if consolidation_low <= 0:
+            return False
         consolidation_range = (consolidation_high - consolidation_low) / consolidation_low
 
         # 횡보 조건: 변동폭 5% 이내
@@ -1041,7 +1043,7 @@ class PricePatternSignal:
             return result
 
         # spike 당일 등락률 확인
-        if spike_idx >= 1:
+        if spike_idx >= 1 and closes[spike_idx - 1] != 0:
             spike_chg = (closes[spike_idx] - closes[spike_idx - 1]) / closes[spike_idx - 1]
             # +5% 이상 급등일 → 이미 급등 완료, 추격 차단
             if spike_chg >= 0.05:
@@ -1053,6 +1055,8 @@ class PricePatternSignal:
         # 최근 15일 내 +15% 이상 급등일이 있으면 → 이미 급등 사이클 완료
         lookback_start = max(spike_idx - 15, 1)
         for i in range(lookback_start, spike_idx + 1):
+            if closes[i - 1] == 0:
+                continue
             if (closes[i] - closes[i - 1]) / closes[i - 1] >= 0.15:
                 return result
 
@@ -1076,7 +1080,7 @@ class PricePatternSignal:
         result["dryup_min_ratio"] = round(dryup_min, 3)
 
         # 폭발일 가격 변화
-        if spike_idx >= 1:
+        if spike_idx >= 1 and closes[spike_idx - 1] != 0:
             price_chg = (closes[spike_idx] - closes[spike_idx - 1]) / closes[spike_idx - 1] * 100
         else:
             price_chg = 0.0
@@ -1755,7 +1759,8 @@ class WeeklyRSISwingSignal:
         has_golden_cross = float(ma50.iloc[-1]) > float(ma200.iloc[-1])
 
         if has_golden_cross:
-            gc_pct = (float(ma50.iloc[-1]) - float(ma200.iloc[-1])) / float(ma200.iloc[-1]) * 100
+            _ma200_val = float(ma200.iloc[-1])
+            gc_pct = (float(ma50.iloc[-1]) - _ma200_val) / _ma200_val * 100 if _ma200_val > 0 else 0.0
             reasons.append(f"골든크로스 확인 → 홀딩/추가 매수 (MA50-MA200 +{gc_pct:.2f}%)")
             score += 35
             # 최근 30일 이내 골든크로스 발생
@@ -1903,7 +1908,7 @@ class MultiTFMomentumPlusSignal:
                 "ma60": curr_ma60,
             }
 
-        gc_pct = (curr_ma20 - curr_ma60) / curr_ma60 * 100
+        gc_pct = (curr_ma20 - curr_ma60) / curr_ma60 * 100 if curr_ma60 > 0 else 0.0
         recent_gc = False
         for i in range(1, min(21, len(ma20))):
             if float(ma20.iloc[-i]) > float(ma60.iloc[-i]) and float(ma20.iloc[-i - 1]) <= float(ma60.iloc[-i - 1]):
@@ -2368,13 +2373,17 @@ class SectorMomentumSignal:
         try:
             close_col = "Close" if "Close" in sector_ohlcv.columns else sector_ohlcv.columns[3]
             s_close = sector_ohlcv[close_col]
-            sector_5d = (float(s_close.iloc[-1]) - float(s_close.iloc[-5])) / float(s_close.iloc[-5]) * 100
+            _s_base = float(s_close.iloc[-5])
+            if _s_base == 0:
+                return {"signal": SignalType.HOLD, "strength": SignalStrength.LOW, "score": 0, "reasons": []}
+            sector_5d = (float(s_close.iloc[-1]) - _s_base) / _s_base * 100
 
             relative = None
             if market_ohlcv is not None and not market_ohlcv.empty and len(market_ohlcv) >= 5:
                 m_close_col = "Close" if "Close" in market_ohlcv.columns else market_ohlcv.columns[3]
                 m_close = market_ohlcv[m_close_col]
-                market_5d = (float(m_close.iloc[-1]) - float(m_close.iloc[-5])) / float(m_close.iloc[-5]) * 100
+                _m_base = float(m_close.iloc[-5])
+                market_5d = (float(m_close.iloc[-1]) - _m_base) / _m_base * 100 if _m_base != 0 else 0.0
                 relative = sector_5d - market_5d
 
                 if relative >= 3.0:

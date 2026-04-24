@@ -162,6 +162,15 @@ class KISRestClient:
                 headers=headers,
                 params=params,
             )
+            # 500 오류는 KIS 서버 일시 장애일 수 있으므로 1회 재시도
+            if res.status_code == 500:
+                import asyncio as _aio
+                await _aio.sleep(1)
+                res = await client.get(
+                    f"{self.BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
+                    headers=headers,
+                    params=params,
+                )
             res.raise_for_status()
             data = res.json()
 
@@ -245,7 +254,12 @@ class KISRestClient:
                         if change_rate < min_change_rate:
                             continue
                         name = item.get("hts_kor_isnm", "")
-                        if any(kw in name for kw in ("레버리지", "인버스", "ETN", "곱버스", "선물")):
+                        if any(kw in name for kw in (
+                            "레버리지", "인버스", "ETN", "곱버스", "선물",
+                            "KODEX", "TIGER", "KBSTAR", "ARIRANG", "HANARO",
+                            "SOL", "ACE", "KOSEF", "FOCUS", "TRUE", "파워",
+                            "스팩", "SPAC", "리츠", "REIT",
+                        )):
                             continue
                         all_results.append({
                             "code": item.get("mksc_shrn_iscd", ""),

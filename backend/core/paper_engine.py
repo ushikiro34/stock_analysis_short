@@ -194,9 +194,9 @@ class PaperEngine:
             logger.debug(f"[Filter] {code} 거래량 {volume:,}주 부족 제외")
             return False
 
-        # 4. 당일 고점 근접 매수 방지 (고점 대비 3% 이내 = 고점에서 사는 꼴)
-        if high > 0 and price > 0 and (price / high) > 0.97:
-            logger.debug(f"[Filter] {code} 고점 근접 제외 (현재 {price:,} / 고가 {high:,} = {price/high*100:.1f}%)")
+        # 4. 당일 고점 근접 매수 방지 (고점 대비 1% 이내 = 최고점 추격)
+        if high > 0 and price > 0 and (price / high) > 0.99:
+            logger.debug(f"[Filter] {code} 고점 직격 제외 (현재 {price:,} / 고가 {high:,} = {price/high*100:.1f}%)")
             return False
 
         return True
@@ -207,6 +207,8 @@ class PaperEngine:
         volume_pct: 잔여 수량 기준 청산 비율 (1.0 = 전량)
         """
         pos.update_highest(current_price)
+        if pos.entry_price <= 0:
+            return False, "entry_price invalid", 0.0
         ratio = (current_price - pos.entry_price) / pos.entry_price
 
         # 급등 전 진입 vs 일반 진입 — 전용 설정 분기
@@ -382,7 +384,7 @@ class PaperEngine:
         from datetime import timezone
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         pl = (exit_price - pos.entry_price) * pos.quantity
-        pl_pct = (exit_price - pos.entry_price) / pos.entry_price * 100
+        pl_pct = (exit_price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0.0
         if pos.db_id:
             row = await db.get(PaperTrade, pos.db_id)
             if row:
@@ -451,7 +453,7 @@ class PaperEngine:
         commission = self._get_commission(price, close_qty)
         self.cash += price * close_qty - commission
 
-        pl_pct = (price - pos.entry_price) / pos.entry_price * 100
+        pl_pct = (price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0.0
         is_full = (close_qty >= pos.quantity)
 
         if is_full:
@@ -562,10 +564,8 @@ class PaperEngine:
                 if not price:
                     continue
 
-                # ── 분봉 진입 타이밍 확인 (단타 진입 + 스윙 홀딩) ──────────
-                minute_ok, minute_sig = await self._check_minute_breakout(sig["code"])
-                if not minute_ok:
-                    continue
+                # ── 분봉 신호 참조 (로깅 전용 — 진입 차단 안 함) ──────────
+                _, minute_sig = await self._check_minute_breakout(sig["code"])
 
                 sig["_name"] = name_map.get(sig["code"], sig["code"])
                 if minute_sig:
@@ -751,7 +751,7 @@ class PaperEngine:
     def get_status(self) -> dict:
         pos_value = sum(p.entry_price * p.quantity for p in self.open_positions)
         total_value = self.cash + pos_value
-        roi = (total_value - self.config.initial_capital) / self.config.initial_capital * 100
+        roi = (total_value - self.config.initial_capital) / self.config.initial_capital * 100 if self.config.initial_capital > 0 else 0.0
         return {
             "is_running": self.is_running,
             "market": self.config.market,

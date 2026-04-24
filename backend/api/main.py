@@ -71,6 +71,9 @@ paper_task: Optional[asyncio.Task] = None
 _surge_cache: dict = {"data": [], "ts": 0}
 _us_surge_cache: dict = {"data": [], "ts": 0}
 
+# 스코어러가 고점수 신호 발견 시 페이퍼 엔진을 즉시 깨우는 이벤트
+_paper_scan_event: asyncio.Event = asyncio.Event()
+
 
 async def run_collector():
     """KIS WebSocket 수집을 백그라운드로 계속 실행 (자동 재접속)"""
@@ -107,6 +110,10 @@ async def run_scorer():
                 logger.info(f"Scorer: KR {len(kr_codes)} stocks...")
                 kr_results = await calculate_scores_for_codes(kr_codes, market="KR")
                 logger.info(f"Scorer: KR completed {len(kr_results)}/{len(kr_codes)}")
+                # 고점수 신호 발견 시 페이퍼 엔진 즉시 트리거
+                if any(r.get("total_score", 0) >= 50 for r in kr_results):
+                    logger.info("Scorer: 고점수 신호 발견 → 페이퍼 엔진 즉시 트리거")
+                    _paper_scan_event.set()
 
             us_codes = [s["code"] for s in surge_us.get("data", [])]
             if us_codes:
@@ -125,7 +132,7 @@ async def run_scorer():
 
 
 async def run_paper_trading():
-    """5분 주기 페이퍼 트레이딩 루프"""
+    """스코어러 트리거 또는 최대 5분 주기 페이퍼 트레이딩 루프"""
     from ..core.paper_engine import paper_engine
     from ..db.session import AsyncSessionLocal
     await asyncio.sleep(20)   # 서버 시작 대기
@@ -135,15 +142,20 @@ async def run_paper_trading():
             await paper_engine.load_from_db(db)
     except Exception as e:
         logger.error(f"Paper engine load error: {e}")
-    # 5분 루프
     while True:
+        # 스코어러 트리거 대기 (최대 5분)
+        try:
+            await asyncio.wait_for(_paper_scan_event.wait(), timeout=300)
+            logger.info("[Paper] 스코어러 트리거로 즉시 실행")
+        except asyncio.TimeoutError:
+            pass
+        _paper_scan_event.clear()
         try:
             async with AsyncSessionLocal() as db:
                 if paper_engine.is_running:
                     await paper_engine.tick(db)
         except Exception as e:
             logger.error(f"Paper trading tick error: {e}")
-        await asyncio.sleep(300)
 
 
 async def run_morning_briefing():

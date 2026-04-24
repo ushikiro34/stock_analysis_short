@@ -267,9 +267,13 @@ function App() {
                 <div className="flex items-center justify-between px-6 py-4">
                     {/* Logo & Title */}
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+                        <button
+                            onClick={() => window.location.reload()}
+                            title="새로고침"
+                            className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center hover:bg-primary/80 active:scale-95 transition-all cursor-pointer"
+                        >
                             <Activity size={24} className="text-white" />
-                        </div>
+                        </button>
                         <div>
                             <h1 className="text-xl font-bold">Stock Analysis System</h1>
                             <p className="text-xs text-slate-400">단타매매 전문 시스템 v2.0</p>
@@ -616,10 +620,9 @@ function App() {
                 <div className={`h-full ${activeTab === 'briefing' ? '' : 'hidden'}`}>
                     <MorningBriefingDashboard
                         isVisible={activeTab === 'briefing'}
-                        onNavigateToStock={(name: string) => {
+                        onNavigateToStock={(code: string) => {
+                            setFocusStockCode(code);
                             setActiveTab('stocks');
-                            setStockNameInput(name);
-                            setStockFilter(f => ({ ...f, stockName: name }));
                         }}
                     />
                 </div>

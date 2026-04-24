@@ -3,7 +3,8 @@ Signals API Router
 매매 신호 관련 엔드포인트
 """
 from fastapi import APIRouter
-from datetime import datetime
+from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 import time
 import logging
 
@@ -22,6 +23,15 @@ router = APIRouter(prefix="/signals", tags=["🚦 Signals"])
 
 # 신호 캐시
 _entry_signals_cache: dict = {}
+
+_KST = ZoneInfo("Asia/Seoul")
+
+def _is_kr_market_open() -> bool:
+    """KST 기준 한국 장 운영 시간 여부 (평일 09:00~15:20)"""
+    now = datetime.now(_KST)
+    if now.weekday() >= 5:
+        return False
+    return dtime(9, 0) <= now.time() <= dtime(15, 20)
 
 
 @router.get("/entry/{code}")
@@ -73,6 +83,11 @@ async def scan_entry_signals(market: str = "KR", strategy: str = "combined", min
     Returns:
         진입 신호 리스트 (점수 높은 순)
     """
+    # 한국 장 마감 시간에는 신호 없음
+    if market == "KR" and not _is_kr_market_open():
+        logger.debug("KR 장 마감 — scan 신호 반환 없음")
+        return []
+
     now = time.time()
     cache_key = f"{market}:{strategy}:{min_score}"
 

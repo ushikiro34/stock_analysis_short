@@ -130,7 +130,20 @@ function App() {
         seenKeysRef.current = new Set();
         isFirstPollRef.current = true;
 
+        const isKRMarketOpen = () => {
+            const kst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+            const day = kst.getDay();
+            if (day === 0 || day === 6) return false;
+            const h = kst.getHours(), m = kst.getMinutes();
+            return (h > 9 || (h === 9 && m >= 0)) && (h < 15 || (h === 15 && m <= 20));
+        };
+
         const poll = async () => {
+            // 한국 장 마감 시간에는 폴링 스킵
+            if (market === 'KR' && !isKRMarketOpen()) {
+                setPollError(false);
+                return;
+            }
             try {
                 const data = await scanSignals(market, 'combined', 65);
                 if (!isFirstPollRef.current) {

@@ -140,6 +140,7 @@ class PaperEngine:
         self._daily_reset_date: Optional[str] = None
         self._started_at: Optional[datetime] = None
         self._elapsed_seconds: float = 0.0
+        self._stopped_today: set = set()   # 당일 손절 청산 종목 코드 (재진입 차단)
 
     # ── 장 시간 체크 ─────────────────────────────────────────
 
@@ -421,6 +422,13 @@ class PaperEngine:
             logger.info("[Paper] 장 시간 외 — tick 스킵")
             return
 
+        # 날짜 변경 시 당일 손절 차단 목록 초기화
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        if self._daily_reset_date != today:
+            self._daily_reset_date = today
+            self._stopped_today.clear()
+            self.closed_today = 0
+
         current_prices: dict = {}
 
         # 1. 오픈 포지션 청산 체크
@@ -459,6 +467,11 @@ class PaperEngine:
         if is_full:
             self.open_positions.remove(pos)
             self.closed_today += 1
+            # 손절 청산(익절/일괄/수동 제외)이면 당일 재진입 차단 목록에 추가
+            _sl_keywords = ("손절", "trailing_stop", "time_limit")
+            if any(k in reason for k in _sl_keywords):
+                self._stopped_today.add(pos.code)
+                logger.info(f"[Paper] {pos.code} 당일 손절 → 재진입 차단 등록")
             logger.info(f"[Paper] CLOSE {pos.code} x{close_qty} @ {price:,.0f}원 ({pl_pct:+.2f}%) — {reason}")
             await self._close_position_in_db(pos, price, reason, db)
         else:
@@ -559,6 +572,14 @@ class PaperEngine:
                 if not self._can_open():
                     break
                 if self._already_holding(sig["code"]):
+                    continue
+                # 추격차단 종목 제외 (signal_service 필터에서 통과됐더라도 이중 방어)
+                if sig.get("chase_blocked"):
+                    logger.debug(f"[Paper] {sig['code']} 추격차단 — 진입 스킵")
+                    continue
+                # 당일 손절 청산 종목 재진입 차단
+                if sig["code"] in self._stopped_today:
+                    logger.debug(f"[Paper] {sig['code']} 당일 손절 종목 — 재진입 차단")
                     continue
                 price = sig.get("current_price") or current_prices.get(sig["code"])
                 if not price:

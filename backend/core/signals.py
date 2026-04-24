@@ -1332,6 +1332,54 @@ class PricePatternSignal:
 
         return result
 
+    def detect_bb_squeeze(self, ohlcv: pd.DataFrame, period: int = 20, squeeze_lookback: int = 120) -> Dict:
+        """볼린저 밴드 스퀴즈 감지
+
+        스퀴즈: 현재 BB폭이 최근 N일 BB폭의 최솟값 근처 (상대 기준)
+        돌파: 스퀴즈 상태에서 현재가가 상단 밴드 위
+
+        Returns:
+            {"detected": bool, "breakout": bool, "score": int, "bb_width": float, "reasons": list}
+        """
+        if len(ohlcv) < max(period, 40):
+            return {"detected": False, "breakout": False, "score": 0, "bb_width": 0.0, "reasons": []}
+
+        bb = IndicatorEngine.calculate_bollinger_bands(ohlcv["Close"], period=period)
+        upper, middle, lower = bb["upper"], bb["middle"], bb["lower"]
+
+        # BB폭 = (상단 - 하단) / 중간 (상대 변동성)
+        bb_width = ((upper - lower) / middle).dropna()
+        if len(bb_width) < 20:
+            return {"detected": False, "breakout": False, "score": 0, "bb_width": 0.0, "reasons": []}
+
+        current_width = float(bb_width.iloc[-1])
+        lookback_min = float(bb_width.tail(squeeze_lookback).min())
+
+        # 스퀴즈: 현재 BB폭이 lookback 기간 최솟값의 120% 이내
+        squeeze = current_width <= lookback_min * 1.2
+
+        # 돌파: 스퀴즈 상태에서 현재가가 상단 밴드 위
+        curr_price = float(ohlcv["Close"].iloc[-1])
+        upper_val = float(upper.iloc[-1])
+        breakout = squeeze and curr_price > upper_val
+
+        score = 0
+        reasons = []
+        if squeeze:
+            score += 10
+            reasons.append("BB 스퀴즈 (변동성 압축 — 폭발 대기)")
+        if breakout:
+            score += 15
+            reasons.append(f"BB 스퀴즈 돌파 ({curr_price:,.0f} > 상단 {upper_val:,.0f})")
+
+        return {
+            "detected": squeeze,
+            "breakout": breakout,
+            "score": score,
+            "bb_width": round(current_width, 4),
+            "reasons": reasons,
+        }
+
     def check_signal(self, ohlcv_data: pd.DataFrame) -> Dict:
         """가격 패턴 신호 체크 (눌림목 포함)"""
         if len(ohlcv_data) < 15:
@@ -1433,6 +1481,12 @@ class PricePatternSignal:
             # 관망 이유만 기록 (점수 미반영)
             reasons.extend(candle_vol_result["reasons"])
 
+        # ── 패턴 10: BB 스퀴즈 ──────────────────────────────────────────
+        bb_squeeze_result = self.detect_bb_squeeze(ohlcv_data)
+        if bb_squeeze_result["detected"]:
+            score = min(100, score + bb_squeeze_result["score"])
+            reasons.extend(bb_squeeze_result["reasons"])
+
         # 신호 강도 결정
         if score >= 70:
             strength = SignalStrength.HIGH
@@ -1464,6 +1518,9 @@ class PricePatternSignal:
 
         # 캔들+거래량 분석 결과 별도 필드 (저항 거래량 → 2순위 익절에 활용)
         result["candle_volume"] = candle_vol_result
+
+        # BB 스퀴즈 결과 별도 필드
+        result["bb_squeeze"] = bb_squeeze_result
 
         return result
 
@@ -2437,7 +2494,8 @@ class SignalManager:
 
     def generate_entry_signal(self, ohlcv_data: pd.DataFrame, strategy: str = "combined",
                               investor_data: Optional[pd.DataFrame] = None,
-                              sector_data: Optional[Dict] = None) -> Dict:
+                              sector_data: Optional[Dict] = None,
+                              minute_data: list = None) -> Dict:
         """
         진입 신호 생성
 
@@ -2550,6 +2608,28 @@ class SignalManager:
                         "[기술적 구조 미달] 수급·섹터 보너스 비적용 (base < 40)"
                     ]
 
+            # ── VWAP 보너스 (분봉 데이터 있을 때만, base_score ≥ 40 게이트) ──
+            minute_vwap_result = {"available": False, "score": 0, "vwap": None, "reasons": []}
+            if minute_data and len(minute_data) >= 10 and base_score >= 40:
+                total_vol = sum(c["volume"] for c in minute_data if c["volume"] > 0)
+                if total_vol > 0:
+                    vwap = sum(c["close"] * c["volume"] for c in minute_data if c["volume"] > 0) / total_vol
+                    curr = float(ohlcv_data["Close"].iloc[-1])
+                    if curr > vwap:
+                        vwap_score = +8
+                        vwap_reason = f"VWAP 상단 확인 ({vwap:,.0f}) — 매수세 우위"
+                    else:
+                        vwap_score = -5
+                        vwap_reason = f"VWAP 하단 ({vwap:,.0f}) — 매도세 우위"
+                    total_score = max(0.0, min(100.0, total_score + vwap_score))
+                    minute_vwap_result = {
+                        "available": True,
+                        "score": vwap_score,
+                        "vwap": round(vwap, 0),
+                        "reasons": [vwap_reason],
+                    }
+                    all_reasons.append(vwap_reason)
+
             # 신호 강도 — base score가 낮으면 수급 보너스와 무관하게 HOLD 유지
             if base_score < 40:
                 # 기술적 구조 미달: 항상 HOLD
@@ -2581,6 +2661,7 @@ class SignalManager:
                     "momentum": mtf_result,
                     "supply": supply_result,
                     "sector": sector_result,
+                    "minute_vwap": minute_vwap_result,
                 }
             }
 

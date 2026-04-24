@@ -391,6 +391,17 @@ async def collect_sector_momentum_data(code: str, market: str = "KR", days: int 
     return {"sector_ohlcv": sector_ohlcv, "market_ohlcv": market_ohlcv}
 
 
+async def _collect_minute_candles(code: str, market: str) -> list:
+    """분봉 데이터 수집 (VWAP용) — KR 전용, 실패 시 빈 리스트"""
+    try:
+        if market != "KR":
+            return []
+        from ..kis.rest_client import get_kis_client
+        return await get_kis_client().get_minute_chart(code) or []
+    except Exception:
+        return []
+
+
 async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "combined") -> Dict:
     """
     진입 신호 생성
@@ -420,17 +431,19 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
     else:
         days = 120
 
-    # combined + KR 시장: OHLCV / 수급 / 섹터 데이터를 병렬 수집
+    # combined + KR 시장: OHLCV / 수급 / 섹터 / 분봉(VWAP) 데이터를 병렬 수집
     if strategy == "combined" and market == "KR":
-        ohlcv_data, investor_data, sector_data = await asyncio.gather(
+        ohlcv_data, investor_data, sector_data, minute_candles = await asyncio.gather(
             collect_ohlcv_data(code, market, days=days),
             collect_investor_supply_data(code, market),
             collect_sector_momentum_data(code, market),
+            _collect_minute_candles(code, market),
         )
     else:
         ohlcv_data = await collect_ohlcv_data(code, market, days=days)
         investor_data = None
         sector_data = None
+        minute_candles = []
 
     if ohlcv_data.empty or len(ohlcv_data) < 20:
         logger.warning(f"[{code}] Insufficient data for signal generation")
@@ -450,6 +463,7 @@ async def generate_entry_signal(code: str, market: str = "KR", strategy: str = "
         ohlcv_data, strategy,
         investor_data=investor_data,
         sector_data=sector_data,
+        minute_data=minute_candles,
     )
 
     # 컵앤핸들 / 캔들-거래량 결과 추출
@@ -519,6 +533,10 @@ async def generate_entry_signals_bulk(codes: List[str], market: str = "KR",
         async with semaphore:
             try:
                 signal = await generate_entry_signal(code, market, strategy)
+
+                # 추격차단 종목은 cup_handle 여부와 무관하게 제외
+                if signal.get("chase_blocked"):
+                    return None
 
                 # 필터링: BUY + 최소점수 이상 OR 컵앤핸들 감지 (점수 미달도 포함)
                 passes_score = signal["signal"] == "BUY" and signal["score"] >= min_score

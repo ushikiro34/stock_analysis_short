@@ -9,6 +9,7 @@ from .monitor import router as monitor_router
 from .live_trading import router as live_router
 from .briefing import router as briefing_router
 from .insights import router as insights_router
+from .watchlist import router as watchlist_router
 
 __all__ = [
     "stocks_router",
@@ -21,4 +22,5 @@ __all__ = [
     "live_router",
     "briefing_router",
     "insights_router",
+    "watchlist_router",
 ]

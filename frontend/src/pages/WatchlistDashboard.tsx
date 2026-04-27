@@ -5,26 +5,15 @@ import {
     ShoppingCart, Check, X,
 } from 'lucide-react';
 import type { Market, StockAnalysis } from '../lib/api';
-import { fetchStockAnalyze, paperTrading } from '../lib/api';
+import { fetchStockAnalyze, paperTrading, watchlistApi } from '../lib/api';
 
-// ── 로컬스토리지 관심종목 관리 ────────────────────────────────
+// ── 관심종목 타입 ─────────────────────────────────────────────
 
 interface WatchItem {
     code: string;
     market: Market;
     addedAt: string;
-    name?: string;  // StocksDashboard 에서 추가 시 종목명 포함
-}
-
-const STORAGE_KEY = 'watchlist_v1';
-
-function loadWatchlist(): WatchItem[] {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
-    catch { return []; }
-}
-
-function saveWatchlist(items: WatchItem[]) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    name?: string;
 }
 
 // ── 유틸 ─────────────────────────────────────────────────────
@@ -108,44 +97,46 @@ export default function WatchlistDashboard({ market, isVisible = false, onNaviga
         setRefreshing(false);
     }, []);
 
-    // 초기 로드 + 탭 전환 시 localStorage 재동기화 + 데이터 갱신
+    // 초기 로드 + 탭 전환 시 서버에서 관심종목 재조회
     useEffect(() => {
         if (!isVisible) return;
-        const saved = loadWatchlist();
-        fetchAll(saved);
+        watchlistApi.list().then(items => {
+            const mapped: WatchItem[] = items.map(i => ({
+                code: i.code,
+                market: i.market as Market,
+                addedAt: i.added_at ?? new Date().toISOString(),
+                name: i.name ?? undefined,
+            }));
+            fetchAll(mapped);
+        }).catch(() => fetchAll([]));
     }, [isVisible, fetchAll]);
 
-    const persistAndFetch = (items: WatchItem[]) => {
-        saveWatchlist(items);
-        fetchAll(items);
-    };
-
     // 종목 추가
-    const handleAdd = () => {
+    const handleAdd = async () => {
         const code = addCode.trim().toUpperCase();
         if (!code) return;
         if (rows.some(r => r.code === code && r.market === addMarket)) { setAddCode(''); return; }
-        const item: WatchItem = { code, market: addMarket, addedAt: new Date().toISOString() };
-        const newItems = [...rows.map(r => ({ code: r.code, market: r.market, addedAt: r.addedAt })), item];
         setAddCode('');
-        persistAndFetch(newItems);
+        try {
+            const saved = await watchlistApi.add(code, addMarket);
+            const item: WatchItem = { code: saved.code, market: saved.market as Market, addedAt: saved.added_at ?? new Date().toISOString(), name: saved.name ?? undefined };
+            const newItems = [...rows.map(r => ({ code: r.code, market: r.market, addedAt: r.addedAt })), item];
+            fetchAll(newItems);
+        } catch { /* 추가 실패 시 무시 */ }
     };
 
     // 종목 삭제
-    const handleDelete = (code: string, mkt: Market) => {
+    const handleDelete = async (code: string, mkt: Market) => {
         const key = `${code}-${mkt}`;
-        const newItems = rows
-            .filter(r => !(r.code === code && r.market === mkt))
-            .map(r => ({ code: r.code, market: r.market, addedAt: r.addedAt }));
-        saveWatchlist(newItems);
         setRows(prev => prev.filter(r => !(r.code === code && r.market === mkt)));
         setQuantities(prev => { const n = { ...prev }; delete n[key]; return n; });
         setBuyStates(prev => { const n = { ...prev }; delete n[key]; return n; });
+        try { await watchlistApi.remove(code, mkt); } catch { /* 삭제 실패 시 무시 */ }
     };
 
     // 전체 새로고침
     const handleRefresh = () => {
-        fetchAll(rows.map(r => ({ code: r.code, market: r.market, addedAt: r.addedAt })));
+        fetchAll(rows.map(r => ({ code: r.code, market: r.market, addedAt: r.addedAt, name: r.name })));
     };
 
     // 수량 변경

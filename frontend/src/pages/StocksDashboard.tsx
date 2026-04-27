@@ -4,25 +4,14 @@ import ScoreCard from '../components/ScoreCard';
 import RiskCard from '../components/RiskCard';
 import SurgeList from '../components/SurgeList';
 import { Loader2, TrendingUp, TrendingDown, Star } from 'lucide-react';
-import { fetchStockScore, fetchDailyChart, fetchWeeklyChart, fetchSurgeStocks, fetchPreSurgeScan, fetchEntrySignal, fetchStockAnalyze, scanPullback, type StockScore, type StockAnalysis, type SurgeStock, type PreSurgeCandidate, type Market, type EntrySignal, type PullbackCandidate } from '../lib/api';
+import { fetchStockScore, fetchDailyChart, fetchWeeklyChart, fetchSurgeStocks, fetchPreSurgeScan, fetchEntrySignal, fetchStockAnalyze, scanPullback, watchlistApi, type StockScore, type StockAnalysis, type SurgeStock, type PreSurgeCandidate, type Market, type EntrySignal, type PullbackCandidate } from '../lib/api';
 import type { StockFilter } from '../App';
-
-// WatchlistDashboard 와 동일한 키/구조 사용 → 두 탭 간 관심종목 동기화
-const WATCHLIST_KEY = 'watchlist_v1';
 
 interface WatchItem {
     code: string;
     market: Market;
     addedAt: string;
-    name?: string;   // 종목명 (선택)
-}
-
-function loadWatchlist(): WatchItem[] {
-    try { return JSON.parse(localStorage.getItem(WATCHLIST_KEY) ?? '[]'); }
-    catch { return []; }
-}
-function saveWatchlist(list: WatchItem[]) {
-    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+    name?: string;
 }
 
 type ChartMode = 'daily' | 'weekly';
@@ -95,8 +84,8 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
     const [preSurgeCandidates, setPreSurgeCandidates] = useState<PreSurgeCandidate[]>([]);
     const [preSurgeLoading, setPreSurgeLoading] = useState(false);
 
-    // Watchlist (localStorage) — WatchlistDashboard 와 동일 키/구조
-    const [watchlist, setWatchlist] = useState<WatchItem[]>(loadWatchlist);
+    // Watchlist — 서버 DB에서 로드
+    const [watchlist, setWatchlist] = useState<WatchItem[]>([]);
     const [watchlistAdded, setWatchlistAdded] = useState(false);
     const isWatchlisted = watchlist.some(w => w.code === stockCode);
 
@@ -128,20 +117,32 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
         if (leftTab === 'presurge') runPreSurgeScan();
     }, [leftTab, runPreSurgeScan]);
 
-    const toggleWatchlist = useCallback(() => {
+    // 마운트 시 서버에서 관심종목 로드
+    useEffect(() => {
+        watchlistApi.list().then(items => {
+            setWatchlist(items.map(i => ({
+                code: i.code,
+                market: i.market as Market,
+                addedAt: i.added_at ?? new Date().toISOString(),
+                name: i.name ?? undefined,
+            })));
+        }).catch(() => {});
+    }, []);
+
+    const toggleWatchlist = useCallback(async () => {
         if (!stockCode) return;
-        setWatchlist(prev => {
-            const next = prev.some(w => w.code === stockCode)
-                ? prev.filter(w => w.code !== stockCode)
-                : [...prev, { code: stockCode, market, addedAt: new Date().toISOString(), name: stockName }];
-            saveWatchlist(next);
-            return next;
-        });
-        if (!isWatchlisted) {
-            setWatchlistAdded(true);
-            setTimeout(() => setWatchlistAdded(false), 2000);
+        if (isWatchlisted) {
+            setWatchlist(prev => prev.filter(w => w.code !== stockCode));
+            try { await watchlistApi.remove(stockCode, market); } catch { /* 무시 */ }
+        } else {
+            const saved = await watchlistApi.add(stockCode, market, stockName).catch(() => null);
+            if (saved) {
+                setWatchlist(prev => [...prev, { code: saved.code, market: saved.market as Market, addedAt: saved.added_at ?? new Date().toISOString(), name: saved.name ?? undefined }]);
+                setWatchlistAdded(true);
+                setTimeout(() => setWatchlistAdded(false), 2000);
+            }
         }
-    }, [stockCode, stockName, isWatchlisted]);
+    }, [stockCode, stockName, market, isWatchlisted]);
 
     // Load surge stocks + poll every 30s
     useEffect(() => {

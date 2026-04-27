@@ -26,6 +26,7 @@ from .routers import (
     live_router,
     briefing_router,
     insights_router,
+    watchlist_router,
 )
 
 # Install in-memory log buffer (captures all log output for /monitor/logs)
@@ -60,6 +61,7 @@ app.include_router(monitor_router)
 app.include_router(live_router)
 app.include_router(briefing_router)
 app.include_router(insights_router)
+app.include_router(watchlist_router)
 
 
 # ── Background Tasks ──────────────────────────────────────────

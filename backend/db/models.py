@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Numeric, BigInteger, Float, Boolean, TIMESTAMP, Text, ForeignKey, PrimaryKeyConstraint
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Numeric, BigInteger, Float, Boolean, TIMESTAMP, Text, ForeignKey, PrimaryKeyConstraint, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .session import Base
 
@@ -186,3 +187,18 @@ class MorningBriefing(Base):
     ai_summary           = Column(Text, nullable=True)
     generated_at         = Column(TIMESTAMP)
     created_at           = Column(TIMESTAMP)
+
+
+# ── Watchlist ──────────────────────────────────────────────────
+
+class Watchlist(Base):
+    """관심종목 (서버 저장 — 다기기 공유)"""
+    __tablename__ = "watchlist"
+    __table_args__ = (UniqueConstraint("code", "market", name="uq_watchlist_code_market"),)
+
+    id       = Column(Integer, primary_key=True, autoincrement=True)
+    code     = Column(String(10), nullable=False)
+    market   = Column(String(4), nullable=False)
+    name     = Column(String(100), nullable=True)
+    added_at = Column(TIMESTAMP, default=datetime.utcnow)
+

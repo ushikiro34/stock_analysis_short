@@ -739,3 +739,24 @@ export const insightsApi = {
     applyRecommendation: (param: string, value: number | string, target: 'live' | 'paper' = 'live'): Promise<{ success: boolean; message: string }> =>
         post(`/insights/apply-recommendation?param=${encodeURIComponent(param)}&value=${encodeURIComponent(String(value))}&target=${target}`, {}),
 };
+
+// ── Watchlist ──────────────────────────────────────────────────
+
+export interface WatchlistItem {
+    id: number;
+    code: string;
+    market: Market;
+    name: string | null;
+    added_at: string | null;
+}
+
+export const watchlistApi = {
+    list: (): Promise<WatchlistItem[]> =>
+        get('/watchlist'),
+    add: (code: string, market: Market, name?: string): Promise<WatchlistItem> =>
+        post('/watchlist', { code, market, name }),
+    remove: async (code: string, market: Market): Promise<void> => {
+        const res = await fetch(`${BASE_URL}/watchlist/${code}?market=${market}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+    },
+};

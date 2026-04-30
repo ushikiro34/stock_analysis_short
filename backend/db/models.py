@@ -202,3 +202,25 @@ class Watchlist(Base):
     name     = Column(String(100), nullable=True)
     added_at = Column(TIMESTAMP, default=datetime.utcnow)
 
+
+# ── Stock Analysis Notes ────────────────────────────────────────
+
+class StockNote(Base):
+    """종목별 사용자 분석 노트 — 매수·매도 판단 시 참조"""
+    __tablename__ = "stock_notes"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    code         = Column(String(10), nullable=False, index=True)
+    note_type    = Column(String(16), default="analysis")
+    # note_type 종류:
+    #   analysis — 일반 차트/흐름 분석 메모 (로깅 참조)
+    #   entry    — 진입 조건 분석 (target_price 포함 가능)
+    #   exit     — 청산 조건 분석 (stop_price 포함 가능)
+    #   block    — 이 종목 진입 차단 (is_active=True인 동안)
+    content      = Column(Text, nullable=False)
+    target_price = Column(Float, nullable=True)   # 목표가 (entry 타입)
+    stop_price   = Column(Float, nullable=True)   # 손절 기준가 (exit 타입)
+    is_active    = Column(Boolean, default=True)
+    created_at   = Column(TIMESTAMP, default=datetime.utcnow)
+    updated_at   = Column(TIMESTAMP, default=datetime.utcnow)
+

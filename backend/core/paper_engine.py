@@ -90,6 +90,10 @@ class PaperPosition:
     cup_handle_status: str = ""          # fresh/pre/forming
     has_candle_vol_signal: bool = False  # 버팀 진입 신호 여부
     entry_reasons: list = field(default_factory=list)  # 진입 사유 목록
+    # ── 신호 품질 기반 동적 파라미터 (None = config 기본값 사용) ─
+    dyn_tp_targets: Optional[List[dict]] = None   # 동적 익절 단계
+    dyn_sl_targets: Optional[List[dict]] = None   # 동적 손절 단계
+    dyn_trailing_stop: Optional[float] = None     # 동적 트레일링 비율
 
     def update_highest(self, price: float):
         self.highest_price = max(self.highest_price, price)
@@ -212,11 +216,17 @@ class PaperEngine:
             return False, "entry_price invalid", 0.0
         ratio = (current_price - pos.entry_price) / pos.entry_price
 
-        # 급등 전 진입 vs 일반 진입 — 전용 설정 분기
-        tp_targets = self.config.pre_surge_take_profit_targets if pos.is_presurge else self.config.take_profit_targets
-        sl_targets = self.config.pre_surge_stop_loss_targets if pos.is_presurge else self.config.stop_loss_targets
-        trailing = self.config.pre_surge_trailing_stop_ratio if pos.is_presurge else self.config.trailing_stop_ratio
-        max_hours = self.config.pre_surge_max_holding_hours if pos.is_presurge else self.config.max_holding_hours
+        # 급등 전 진입 vs 일반 진입 — 전용 설정 분기 (동적 파라미터 우선)
+        if pos.is_presurge:
+            tp_targets = pos.dyn_tp_targets or self.config.pre_surge_take_profit_targets
+            sl_targets = pos.dyn_sl_targets or self.config.pre_surge_stop_loss_targets
+            trailing   = pos.dyn_trailing_stop if pos.dyn_trailing_stop is not None else self.config.pre_surge_trailing_stop_ratio
+            max_hours  = self.config.pre_surge_max_holding_hours
+        else:
+            tp_targets = pos.dyn_tp_targets or self.config.take_profit_targets
+            sl_targets = pos.dyn_sl_targets or self.config.stop_loss_targets
+            trailing   = pos.dyn_trailing_stop if pos.dyn_trailing_stop is not None else self.config.trailing_stop_ratio
+            max_hours  = self.config.max_holding_hours
 
         # 1. 분할 익절 (이미 실행된 단계는 건너뜀)
         for i, tgt in enumerate(tp_targets):
@@ -330,6 +340,21 @@ class PaperEngine:
                 )
                 for r in rows
             ]
+            # 당일 손절 종목 복원 (재시작 후 재진입 차단 유지)
+            today_str = datetime.now(KST).strftime("%Y-%m-%d")
+            sl_keywords = ("손절", "trailing_stop", "time_limit")
+            sl_result = await db.execute(
+                select(PaperTrade).where(
+                    PaperTrade.status == "CLOSED",
+                    PaperTrade.exit_time >= today_str,
+                )
+            )
+            for r in sl_result.scalars().all():
+                if r.exit_reason and any(k in r.exit_reason for k in sl_keywords):
+                    self._stopped_today.add(r.code)
+            if self._stopped_today:
+                logger.info(f"[Paper] 당일 손절 복원: {self._stopped_today}")
+
             logger.info(f"[Paper] DB 복원: cash={self.cash:,.0f}, positions={len(self.open_positions)}, running={self.is_running}")
         except Exception as e:
             logger.error(f"[Paper] DB 복원 실패: {e}")
@@ -519,6 +544,75 @@ class PaperEngine:
                 open_row.highest_price = pos.highest_price
         await db.commit()
 
+    @staticmethod
+    def _calc_dynamic_params(signal: dict, is_presurge: bool, config: 'PaperConfig') -> tuple:
+        """signal breakdown 분석 → 포지션별 동적 TP/SL 파라미터
+        returns: (tp_targets, sl_targets, trailing_stop_ratio, adjustments_log)
+        pre_surge 포지션은 이미 넉넉히 설정돼 있으므로 조정 없음.
+        """
+        if is_presurge:
+            return (
+                [t.copy() for t in config.pre_surge_take_profit_targets],
+                [t.copy() for t in config.pre_surge_stop_loss_targets],
+                config.pre_surge_trailing_stop_ratio,
+                [],
+            )
+
+        tp = [t.copy() for t in config.take_profit_targets]
+        sl = [t.copy() for t in config.stop_loss_targets]
+        trailing = config.trailing_stop_ratio
+        logs = []
+
+        breakdown = signal.get("breakdown") or {}
+        if not isinstance(breakdown, dict):
+            return tp, sl, trailing, logs
+
+        pat = breakdown.get("pattern") or {}
+        vol = breakdown.get("volume") or {}
+        total_score = float(signal.get("score") or signal.get("total_score") or 0)
+
+        # ① 컵앤핸들 강한 패턴 (score ≥ 70) → trailing 확장 + 3차 TP 상향
+        ch = pat.get("cup_handle") if isinstance(pat, dict) else None
+        ch_score = float(ch.get("score", 0)) if isinstance(ch, dict) else 0
+        if ch_score >= 70:
+            trailing = -0.08
+            if len(tp) >= 3:
+                tp[2] = {**tp[2], "ratio": 0.15, "name": "3차 익절 +15% (컵앤핸들)"}
+            logs.append(f"컵앤핸들({ch_score:.0f}pt)→trailing-8%,3차TP+15%")
+
+        # ② 거래량 신호 강함 (score ≥ 85) → trailing 확장
+        vol_score = float(vol.get("score", 0)) if isinstance(vol, dict) else 0
+        if vol_score >= 85:
+            if trailing > -0.07:
+                trailing = -0.07
+            logs.append(f"거래량강세({vol_score:.0f}pt)→trailing-7%이상")
+
+        # ③ 총점 고점수 (≥ 80) + 아직 기본값이면 trailing 소폭 확장
+        if total_score >= 80 and trailing == config.trailing_stop_ratio:
+            trailing = -0.07
+            if len(tp) >= 3 and tp[2]["ratio"] < 0.15:
+                tp[2] = {**tp[2], "ratio": 0.15, "name": "3차 익절 +15% (고점수)"}
+            logs.append(f"고점수({total_score:.0f}pt)→trailing-7%,3차TP+15%")
+
+        return tp, sl, trailing, logs
+
+    async def _load_stock_notes(self, code: str, db: AsyncSession) -> list:
+        """종목 분석 노트 조회 (is_active=True만)"""
+        try:
+            from sqlalchemy import select
+            from ..db.models import StockNote
+            rows = (await db.execute(
+                select(StockNote).where(StockNote.code == code, StockNote.is_active == True)
+            )).scalars().all()
+            return [
+                {"note_type": r.note_type, "content": r.content,
+                 "target_price": r.target_price, "stop_price": r.stop_price}
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning(f"[Paper] {code} 노트 조회 실패: {e}")
+            return []
+
     async def _check_minute_breakout(self, code: str) -> tuple:
         """분봉 진입 타이밍 신호 확인 (단타 진입 + 스윙 홀딩).
 
@@ -584,6 +678,17 @@ class PaperEngine:
                 price = sig.get("current_price") or current_prices.get(sig["code"])
                 if not price:
                     continue
+
+                # ── 종목 분석 노트 참조 ──────────────────────────────
+                notes = await self._load_stock_notes(sig["code"], db)
+                block = next((n for n in notes if n["note_type"] == "block"), None)
+                if block:
+                    logger.info(f"[Paper] {sig['code']} 분석노트 차단: {block['content'][:60]}")
+                    continue
+                if notes:
+                    sig.setdefault("reasons", []).extend(
+                        [f"[노트:{n['note_type']}] {n['content'][:80]}" for n in notes]
+                    )
 
                 # ── 분봉 신호 참조 (로깅 전용 — 진입 차단 안 함) ──────────
                 _, minute_sig = await self._check_minute_breakout(sig["code"])
@@ -701,6 +806,9 @@ class PaperEngine:
         has_ch = bool(cup_handle_data.get("score", 0) >= 40) if cup_handle_data else False
         has_cv = bool(candle_vol.get("entry_signal", False))
 
+        # 신호 품질 기반 동적 파라미터 계산
+        dyn_tp, dyn_sl, dyn_trailing, dyn_logs = self._calc_dynamic_params(signal, is_presurge, self.config)
+
         pos = PaperPosition(
             db_id=None,
             code=signal["code"],
@@ -719,10 +827,14 @@ class PaperEngine:
             cup_handle_status=ch_status,
             has_candle_vol_signal=has_cv,
             entry_reasons=signal.get("reasons", []),
+            dyn_tp_targets=dyn_tp,
+            dyn_sl_targets=dyn_sl,
+            dyn_trailing_stop=dyn_trailing,
         )
         self.open_positions.append(pos)
         res_info = f" | 저항가={res_price:,.0f} 저항거래량={res_volume:.0f}" if res_price > 0 else ""
-        logger.info(f"[Paper] BUY {pos.code} x{qty} @ {price:,.0f}원 (score={pos.entry_score:.0f}){res_info}")
+        dyn_info = f" | 동적조정: {', '.join(dyn_logs)}" if dyn_logs else ""
+        logger.info(f"[Paper] BUY {pos.code} x{qty} @ {price:,.0f}원 (score={pos.entry_score:.0f}){res_info}{dyn_info}")
         await self._save_open_position(pos, db)
 
     # ── 외부 제어 ────────────────────────────────────────────

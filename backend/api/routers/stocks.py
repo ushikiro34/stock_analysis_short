@@ -2,13 +2,16 @@
 Stocks API Router
 주식 데이터 관련 엔드포인트
 """
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import asyncio
 import time
 import logging
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from ...db.session import get_db
 
 from ...core.score_service import calculate_score
 from ...kis.rest_client import get_kis_client
@@ -510,3 +513,99 @@ async def get_screener_strategies():
     except Exception as e:
         logger.error(f"Get strategies error: {e}")
         return {}
+
+
+# ── Stock Notes (종목 분석 노트) ──────────────────────────────
+
+class NoteCreate(BaseModel):
+    note_type: str = "analysis"   # analysis / entry / exit / block
+    content: str
+    target_price: Optional[float] = None
+    stop_price: Optional[float] = None
+
+class NoteUpdate(BaseModel):
+    note_type: Optional[str] = None
+    content: Optional[str] = None
+    target_price: Optional[float] = None
+    stop_price: Optional[float] = None
+    is_active: Optional[bool] = None
+
+
+def _note_to_dict(row) -> dict:
+    return {
+        "id": row.id,
+        "code": row.code,
+        "note_type": row.note_type,
+        "content": row.content,
+        "target_price": row.target_price,
+        "stop_price": row.stop_price,
+        "is_active": row.is_active,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/notes/{code}")
+async def get_stock_notes(code: str, active_only: bool = True, db: AsyncSession = Depends(get_db)):
+    """종목 분석 노트 목록 조회"""
+    from sqlalchemy import select
+    from ...db.models import StockNote
+    q = select(StockNote).where(StockNote.code == code)
+    if active_only:
+        q = q.where(StockNote.is_active == True)
+    q = q.order_by(StockNote.created_at.desc())
+    rows = (await db.execute(q)).scalars().all()
+    return [_note_to_dict(r) for r in rows]
+
+
+@router.post("/notes/{code}", status_code=201)
+async def create_stock_note(code: str, body: NoteCreate, db: AsyncSession = Depends(get_db)):
+    """종목 분석 노트 생성"""
+    from ...db.models import StockNote
+    note = StockNote(
+        code=code,
+        note_type=body.note_type,
+        content=body.content,
+        target_price=body.target_price,
+        stop_price=body.stop_price,
+    )
+    db.add(note)
+    await db.commit()
+    await db.refresh(note)
+    return _note_to_dict(note)
+
+
+@router.put("/notes/item/{note_id}")
+async def update_stock_note(note_id: int, body: NoteUpdate, db: AsyncSession = Depends(get_db)):
+    """노트 수정"""
+    from ...db.models import StockNote
+    row = await db.get(StockNote, note_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="노트 없음")
+    if body.note_type is not None:
+        row.note_type = body.note_type
+    if body.content is not None:
+        row.content = body.content
+    if body.target_price is not None:
+        row.target_price = body.target_price
+    if body.stop_price is not None:
+        row.stop_price = body.stop_price
+    if body.is_active is not None:
+        row.is_active = body.is_active
+    row.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(row)
+    return _note_to_dict(row)
+
+
+@router.delete("/notes/item/{note_id}")
+async def delete_stock_note(note_id: int, db: AsyncSession = Depends(get_db)):
+    """노트 비활성화 (소프트 삭제)"""
+    from ...db.models import StockNote
+    row = await db.get(StockNote, note_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="노트 없음")
+    row.is_active = False
+    row.updated_at = datetime.utcnow()
+    await db.commit()
+    return {"status": "deactivated", "id": note_id}

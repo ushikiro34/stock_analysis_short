@@ -538,10 +538,8 @@ async def generate_entry_signals_bulk(codes: List[str], market: str = "KR",
                 if signal.get("chase_blocked"):
                     return None
 
-                # 필터링: BUY + 최소점수 이상 OR 컵앤핸들 감지 (점수 미달도 포함)
-                passes_score = signal["signal"] == "BUY" and signal["score"] >= min_score
-                is_cup_handle = signal.get("cup_handle_confirmed", False)
-                if passes_score or is_cup_handle:
+                # 필터링: BUY + 최소점수 이상 (컵앤핸들도 점수 조건 동일 적용)
+                if signal["signal"] == "BUY" and signal["score"] >= min_score:
                     return signal
 
                 return None

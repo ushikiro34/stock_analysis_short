@@ -13,6 +13,8 @@ interface CandleData {
 interface EnrichedBar extends CandleData {
     ma20: number | null;
     ma60: number | null;
+    bbUpper: number | null;
+    bbLower: number | null;
 }
 
 interface CandleChartProps {
@@ -24,6 +26,21 @@ function calcMA(closes: number[], period: number): (number | null)[] {
     return closes.map((_, i) =>
         i < period - 1 ? null : closes.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0) / period
     );
+}
+
+// 볼린져밴드 계산 (period=20, multiplier=2)
+function calcBB(closes: number[], period = 20, mult = 2): { upper: (number | null)[]; lower: (number | null)[] } {
+    const upper: (number | null)[] = [];
+    const lower: (number | null)[] = [];
+    for (let i = 0; i < closes.length; i++) {
+        if (i < period - 1) { upper.push(null); lower.push(null); continue; }
+        const slice = closes.slice(i - period + 1, i + 1);
+        const mean  = slice.reduce((a, b) => a + b, 0) / period;
+        const std   = Math.sqrt(slice.reduce((a, b) => a + (b - mean) ** 2, 0) / period);
+        upper.push(mean + mult * std);
+        lower.push(mean - mult * std);
+    }
+    return { upper, lower };
 }
 
 function fmtVol(v: number): string {
@@ -41,8 +58,9 @@ const GRID_COLOR = '#334155';
 const TEXT_COLOR = '#94a3b8';
 const UP_COLOR   = '#22c55e';
 const DOWN_COLOR = '#ef4444';
-const MA20_COLOR = '#f59e0b';
-const MA60_COLOR = '#60a5fa';
+const MA20_COLOR  = '#f59e0b';
+const MA60_COLOR  = '#60a5fa';
+const BB_COLOR    = '#a78bfa';
 
 const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -52,6 +70,8 @@ const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
     const volRef       = useRef<ISeriesApi<'Histogram'> | null>(null);
     const ma20Ref      = useRef<ISeriesApi<'Line'> | null>(null);
     const ma60Ref      = useRef<ISeriesApi<'Line'> | null>(null);
+    const bbUpperRef   = useRef<ISeriesApi<'Line'> | null>(null);
+    const bbLowerRef   = useRef<ISeriesApi<'Line'> | null>(null);
     const firstDataRef = useRef(true);
     // 최신 bar 맵: time → EnrichedBar (crosshair 핸들러에서 조회)
     const barMapRef    = useRef<Map<string | number, EnrichedBar>>(new Map());
@@ -109,6 +129,24 @@ const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
             title: 'MA60', crosshairMarkerVisible: false,
         });
 
+        // ── 볼린져밴드 상단 ───────────────────────────────────
+        const bbUpperSeries = chart.addLineSeries({
+            color: BB_COLOR, lineWidth: 1,
+            lineStyle: 2, // dashed
+            priceScaleId: 'right',
+            lastValueVisible: false, priceLineVisible: false,
+            title: 'BB상', crosshairMarkerVisible: false,
+        });
+
+        // ── 볼린져밴드 하단 ───────────────────────────────────
+        const bbLowerSeries = chart.addLineSeries({
+            color: BB_COLOR, lineWidth: 1,
+            lineStyle: 2, // dashed
+            priceScaleId: 'right',
+            lastValueVisible: false, priceLineVisible: false,
+            title: 'BB하', crosshairMarkerVisible: false,
+        });
+
         // ── 거래량 히스토그램 ─────────────────────────────────
         const volSeries = chart.addHistogramSeries({
             priceScaleId: 'volume',
@@ -117,11 +155,13 @@ const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
         });
         volSeries.priceScale().applyOptions({ scaleMargins: { top: 0.80, bottom: 0.00 } });
 
-        chartRef.current  = chart;
-        candleRef.current = candleSeries;
-        ma20Ref.current   = ma20Series;
-        ma60Ref.current   = ma60Series;
-        volRef.current    = volSeries;
+        chartRef.current   = chart;
+        candleRef.current  = candleSeries;
+        ma20Ref.current    = ma20Series;
+        ma60Ref.current    = ma60Series;
+        bbUpperRef.current = bbUpperSeries;
+        bbLowerRef.current = bbLowerSeries;
+        volRef.current     = volSeries;
         firstDataRef.current = true;
 
         // ── 크로스헤어 툴팁 ──────────────────────────────────
@@ -170,6 +210,8 @@ const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
                     ${bar.volume ? `<span style="color:${TEXT_COLOR}">거래량</span><span style="color:#e2e8f0;font-family:monospace">${fmtVol(bar.volume)}</span>` : ''}
                     ${bar.ma20 != null ? `<span style="color:${MA20_COLOR}">MA20</span><span style="color:${MA20_COLOR};font-family:monospace">${fmtPrice(Math.round(bar.ma20))}</span>` : ''}
                     ${bar.ma60 != null ? `<span style="color:${MA60_COLOR}">MA60</span><span style="color:${MA60_COLOR};font-family:monospace">${fmtPrice(Math.round(bar.ma60))}</span>` : ''}
+                    ${bar.bbUpper != null ? `<span style="color:${BB_COLOR}">BB상</span><span style="color:${BB_COLOR};font-family:monospace">${fmtPrice(Math.round(bar.bbUpper))}</span>` : ''}
+                    ${bar.bbLower != null ? `<span style="color:${BB_COLOR}">BB하</span><span style="color:${BB_COLOR};font-family:monospace">${fmtPrice(Math.round(bar.bbLower))}</span>` : ''}
                 </div>
             `;
 
@@ -200,24 +242,26 @@ const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
         return () => {
             ro.disconnect();
             chart.remove();
-            chartRef.current = candleRef.current = ma20Ref.current = ma60Ref.current = volRef.current = null;
+            chartRef.current = candleRef.current = ma20Ref.current = ma60Ref.current = volRef.current = bbUpperRef.current = bbLowerRef.current = null;
         };
     }, []);
 
     // 데이터 갱신
     useEffect(() => {
         if (!candleRef.current || !volRef.current || !ma20Ref.current || !ma60Ref.current) return;
+        if (!bbUpperRef.current || !bbLowerRef.current) return;
         if (data.length === 0) return;
 
-        // MA 계산
+        // MA / BB 계산
         const closes = data.map(c => c.close);
         const ma20   = calcMA(closes, 20);
         const ma60   = calcMA(closes, 60);
+        const bb     = calcBB(closes, 20, 2);
 
         // barMap 갱신 (크로스헤어 핸들러용)
         const newMap = new Map<string | number, EnrichedBar>();
         data.forEach((c, i) => {
-            newMap.set(c.time, { ...c, ma20: ma20[i], ma60: ma60[i] });
+            newMap.set(c.time, { ...c, ma20: ma20[i], ma60: ma60[i], bbUpper: bb.upper[i], bbLower: bb.lower[i] });
         });
         barMapRef.current = newMap;
 
@@ -238,6 +282,16 @@ const CandleChart: React.FC<CandleChartProps> = ({ data }) => {
         );
         ma60Ref.current.setData(
             data.map((c, i) => ({ time: c.time, value: ma60[i] }))
+                .filter(d => d.value != null) as any
+        );
+
+        // 볼린져밴드 상단 / 하단
+        bbUpperRef.current.setData(
+            data.map((c, i) => ({ time: c.time, value: bb.upper[i] }))
+                .filter(d => d.value != null) as any
+        );
+        bbLowerRef.current.setData(
+            data.map((c, i) => ({ time: c.time, value: bb.lower[i] }))
                 .filter(d => d.value != null) as any
         );
 

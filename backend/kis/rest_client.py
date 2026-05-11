@@ -258,8 +258,8 @@ class KISRestClient:
                             "레버리지", "인버스", "ETN", "곱버스", "선물",
                             "KODEX", "TIGER", "KBSTAR", "ARIRANG", "HANARO",
                             "SOL", "ACE", "KOSEF", "FOCUS", "TRUE", "파워",
-                            "스팩", "SPAC", "리츠", "REIT",
-                        )):
+                            "스팩", "SPAC", "리츠", "REIT", "라이즈",
+                        )) or name.lower().startswith("rise"):
                             continue
                         all_results.append({
                             "code": item.get("mksc_shrn_iscd", ""),

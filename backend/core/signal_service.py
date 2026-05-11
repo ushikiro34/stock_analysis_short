@@ -700,12 +700,13 @@ async def scan_pullback_candidates(
     return results
 
 
-async def scan_pre_surge_stocks(market: str = "KR", limit: int = 80) -> List[Dict]:
+async def scan_pre_surge_stocks(market: str = "KR", limit: int = 200) -> List[Dict]:
     """
-    거래량 상위 종목 중 급등 전 시그널(건조회복/세력매집/압축횡보) 감지
+    전일 차트 기반 pre-surge 스캔 — 아직 오르지 않은 종목 중 패턴 감지
 
-    - 등락률 필터 없음 (아직 안 움직인 종목 포함)
-    - 거래량 상위 80종목 스캔 → pre_surge 패턴 있는 종목만 반환
+    - 거래량 상위 200종목 스캔 (유니버스 확대)
+    - 당일 등락률 5% 초과 종목 제외 (이미 급등 시작한 종목 제거)
+    - 건조회복/세력매집/압축횡보 패턴 감지
     - score 내림차순 정렬
     """
     from .signals import PricePatternSignal
@@ -716,6 +717,9 @@ async def scan_pre_surge_stocks(market: str = "KR", limit: int = 80) -> List[Dic
     except Exception as e:
         logger.error(f"[PreSurge] 거래량 조회 실패: {e}")
         return []
+
+    # 이미 많이 오른 종목 제외 (당일 +5% 초과 = 이미 급등 진행 중)
+    stocks = [s for s in stocks if s.get("change_rate", 0) <= 5.0]
 
     codes = [s["code"] for s in stocks]
     name_map = {s["code"]: s["name"] for s in stocks}

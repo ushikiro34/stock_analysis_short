@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import CandleChart from '../components/CandleChart';
-import ScoreCard from '../components/ScoreCard';
-import RiskCard from '../components/RiskCard';
 import SurgeList from '../components/SurgeList';
 import { Loader2, TrendingUp, TrendingDown, Star } from 'lucide-react';
 import { fetchStockScore, fetchDailyChart, fetchWeeklyChart, fetchSurgeStocks, fetchPreSurgeScan, fetchEntrySignal, fetchStockAnalyze, scanPullback, watchlistApi, type StockScore, type StockAnalysis, type SurgeStock, type PreSurgeCandidate, type Market, type EntrySignal, type PullbackCandidate } from '../lib/api';
@@ -78,7 +76,7 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
     const stockName = surgeInfo?.name ?? stockCode ?? '';
 
     // Left panel tab: 급등주 vs 눌림목
-    const [leftTab, setLeftTab] = useState<'surge' | 'pullback' | 'presurge'>('surge');
+    const [leftTab, setLeftTab] = useState<'surge' | 'pullback' | 'presurge'>('presurge');
     const [pullbackCandidates, setPullbackCandidates] = useState<PullbackCandidate[]>([]);
     const [pullbackLoading, setPullbackLoading] = useState(false);
     const [preSurgeCandidates, setPreSurgeCandidates] = useState<PreSurgeCandidate[]>([]);

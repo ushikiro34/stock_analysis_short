@@ -6,7 +6,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/stock_db")
+_raw_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/stock_db")
+# Railway/Supabase는 postgres:// 또는 postgresql:// 형식으로 제공 — asyncpg 드라이버 prefix로 변환
+if _raw_url.startswith("postgres://"):
+    _raw_url = _raw_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif _raw_url.startswith("postgresql://"):
+    _raw_url = _raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+DATABASE_URL = _raw_url
 
 # SSL only for remote DB (Supabase), not for localhost
 connect_args = {}

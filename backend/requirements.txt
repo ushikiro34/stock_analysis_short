@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+aiofiles
 sqlalchemy[asyncio]
 asyncpg
 psycopg2-binary
@@ -9,6 +10,7 @@ websockets
 python-dotenv
 requests
 httpx
+lxml
 pykrx
 yfinance
 anthropic

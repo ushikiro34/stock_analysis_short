@@ -8,7 +8,6 @@ import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
-from pykrx import stock as pykrx_stock
 
 from .scorer import Scorer
 from .indicators import IndicatorEngine
@@ -55,6 +54,7 @@ async def collect_technical(code: str, market: str = "KR") -> dict:
     start = end - timedelta(days=200)  # MA120 계산을 위해 충분한 기간
 
     try:
+        from pykrx import stock as pykrx_stock
         df = await _run_sync(
             lambda: pykrx_stock.get_market_ohlcv_by_date(
                 start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), code

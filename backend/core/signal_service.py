@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-from pykrx import stock as pykrx_stock
 
 from .signals import SignalManager
 from .indicators import IndicatorEngine
@@ -98,6 +97,7 @@ async def _detect_stock_market(code: str) -> str:
         if c and now - c["ts"] < _TICKER_MARKET_TTL:
             return c["tickers"]
         try:
+            from pykrx import stock as pykrx_stock
             tickers = await _run_sync(
                 lambda: pykrx_stock.get_market_ticker_list(today, market=market_name)
             )
@@ -192,6 +192,7 @@ async def collect_ohlcv_data(code: str, market: str = "KR", days: int = 120) -> 
         end_str   = end.strftime("%Y%m%d")
 
         def _fetch_krx():
+            from pykrx import stock as pykrx_stock
             return pykrx_stock.get_market_ohlcv_by_date(start_str, end_str, code)
 
         def _fetch_naver():
@@ -250,6 +251,7 @@ async def collect_investor_supply_data(code: str, market: str = "KR", days: int 
     start = end - timedelta(days=days + 5)  # 영업일 여유 확보
 
     try:
+        from pykrx import stock as pykrx_stock
         df = await _run_sync(
             lambda: pykrx_stock.get_market_trading_volume_by_date(
                 start.strftime("%Y%m%d"),
@@ -302,6 +304,7 @@ async def _get_shared_market_data(days: int = 20, market: str = "KOSPI") -> Dict
 
     async def _fetch_market_ohlcv():
         try:
+            from pykrx import stock as pykrx_stock
             raw = await _run_sync(
                 lambda: pykrx_stock.get_index_ohlcv_by_date(from_str, to_str, index_ticker)
             )
@@ -312,6 +315,7 @@ async def _get_shared_market_data(days: int = 20, market: str = "KOSPI") -> Dict
 
     async def _fetch_sector_df():
         try:
+            from pykrx import stock as pykrx_stock
             df = await _run_sync(
                 lambda: pykrx_stock.get_market_sector_classifications(to_str, market)
             )
@@ -388,6 +392,7 @@ async def collect_sector_momentum_data(code: str, market: str = "KR", days: int 
                          if keyword in sector_name), None
                     )
                     if sector_ticker:
+                        from pykrx import stock as pykrx_stock
                         _t = sector_ticker  # lambda late-binding 방지
                         raw_s = await _run_sync(
                             lambda: pykrx_stock.get_index_ohlcv_by_date(from_str, to_str, _t)

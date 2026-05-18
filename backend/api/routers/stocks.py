@@ -15,7 +15,6 @@ from ...db.session import get_db
 
 from ...core.score_service import calculate_score
 from ...kis.rest_client import get_kis_client
-from pykrx import stock as pykrx_stock
 from ...core.signal_service import collect_ohlcv_data
 from ...core.signals import SignalManager
 
@@ -95,6 +94,7 @@ async def analyze_stock(code: str, market: str = "KR"):
     try:
         # ── OHLCV 로드 (300일) ──────────────────────────────────
         if market == "KR":
+            from pykrx import stock as pykrx_stock
             end_dt = datetime.now()
             start_dt = end_dt - timedelta(days=300)
             raw = await loop.run_in_executor(
@@ -303,6 +303,7 @@ async def get_stock_weekly(code: str, market: str = "KR"):
             from ...us.yfinance_client import get_us_weekly_chart
             results = await get_us_weekly_chart(code)
         else:
+            from pykrx import stock as pykrx_stock
             end = datetime.now()
             start = end - timedelta(days=365)
             loop = asyncio.get_event_loop()
@@ -377,6 +378,7 @@ async def get_stock_daily(code: str, market: str = "KR"):
             from ...us.yfinance_client import get_us_daily_chart
             results = await get_us_daily_chart(code)
         else:
+            from pykrx import stock as pykrx_stock
             end = datetime.now()
             start = end - timedelta(days=90)
             loop = asyncio.get_event_loop()

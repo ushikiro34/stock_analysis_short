@@ -644,12 +644,60 @@ class PaperEngine:
             logger.warning(f"[Paper] {code} 분봉 확인 실패: {e} — 일봉 신호로 진입")
             return True, {}
 
+    async def _get_pykrx_volume_rank(self, limit: int = 50) -> list:
+        """KIS API 차단 시 pykrx로 거래량 상위 종목 조회 (해외 서버 fallback)"""
+        import asyncio
+        from datetime import datetime, timedelta
+        loop = asyncio.get_event_loop()
+
+        async def _fetch(date_str: str):
+            from pykrx import stock as pykrx_stock
+            return await loop.run_in_executor(
+                None, lambda: pykrx_stock.get_market_ohlcv_by_ticker(date_str, market="KOSPI")
+            )
+
+        today = datetime.now().strftime("%Y%m%d")
+        df = await _fetch(today)
+        if df is None or df.empty:
+            df = await _fetch((datetime.now() - timedelta(days=1)).strftime("%Y%m%d"))
+        if df is None or df.empty:
+            return []
+
+        df = df[df["거래량"] > 0].sort_values("거래량", ascending=False).head(limit * 2)
+
+        from pykrx import stock as pykrx_stock
+        result = []
+        for code, row in df.iterrows():
+            if len(result) >= limit:
+                break
+            price = int(row.get("종가", 0))
+            volume = int(row.get("거래량", 0))
+            if price == 0 or volume == 0:
+                continue
+            try:
+                name = pykrx_stock.get_market_ticker_name(str(code)) or str(code)
+            except Exception:
+                name = str(code)
+            result.append({
+                "code": str(code),
+                "name": name,
+                "price": price,
+                "change_rate": float(row.get("등락률", 0)),
+                "volume": volume,
+            })
+        logger.info(f"[Paper] pykrx fallback: {len(result)}종목 조회 완료")
+        return result
+
     async def _scan_and_buy(self, db: AsyncSession, current_prices: dict) -> None:
         from .signal_service import generate_entry_signals_bulk
         from ..kis.rest_client import get_kis_client
 
         try:
-            surge = await get_kis_client().get_volume_rank(limit=50)
+            try:
+                surge = await get_kis_client().get_volume_rank(limit=50)
+            except Exception as e:
+                logger.warning(f"[Paper] KIS volume rank 실패({e}) — pykrx fallback 사용")
+                surge = await self._get_pykrx_volume_rank(limit=50)
             name_map = {s["code"]: s.get("name", "") for s in surge}
             codes = [
                 s["code"] for s in surge
@@ -714,8 +762,10 @@ class PaperEngine:
         try:
             surge = await get_kis_client().get_volume_rank(limit=100)
         except Exception as e:
-            logger.error(f"[Paper][PreSurge] 거래량 상위 조회 실패: {e}")
-            return
+            logger.warning(f"[Paper][PreSurge] KIS volume rank 실패({e}) — pykrx fallback 사용")
+            surge = await self._get_pykrx_volume_rank(limit=100)
+            if not surge:
+                return
 
         name_map = {s["code"]: s.get("name", "") for s in surge}
         # 거래량 최소치만 적용 (등락률 필터는 해제 — 아직 안 움직인 종목을 잡기 위해)

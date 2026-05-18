@@ -1,0 +1,22 @@
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.venv
+**/venv
+**/.env
+
+# Node
+frontend/node_modules
+frontend/.vite
+
+# Dev artifacts
+*.log
+.git
+.gitignore
+**/tests
+backend/analysis
+
+# Docs
+*.md
+docs/

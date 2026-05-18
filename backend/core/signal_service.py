@@ -188,30 +188,39 @@ async def collect_ohlcv_data(code: str, market: str = "KR", days: int = 120) -> 
         end = datetime.now()
         start = end - timedelta(days=days)
 
-        try:
-            df = await _run_sync(
-                lambda: pykrx_stock.get_market_ohlcv_by_date(
-                    start.strftime("%Y%m%d"),
-                    end.strftime("%Y%m%d"),
-                    code
-                )
-            )
+        start_str = start.strftime("%Y%m%d")
+        end_str   = end.strftime("%Y%m%d")
 
-            if df.empty:
+        def _fetch_krx():
+            return pykrx_stock.get_market_ohlcv_by_date(start_str, end_str, code)
+
+        def _fetch_naver():
+            from pykrx.website import naver as _pykrx_naver
+            return _pykrx_naver.get_market_ohlcv_by_date(start_str, end_str, code)
+
+        try:
+            df = await _run_sync(_fetch_krx)
+            if df is None or df.empty:
+                raise ValueError("KRX 응답 없음")
+        except Exception as e:
+            logger.warning(f"[{code}] KRX 조회 실패({e}) — Naver Finance로 우회")
+            try:
+                df = await _run_sync(_fetch_naver)
+            except Exception as e2:
+                logger.error(f"[{code}] Naver Finance 우회도 실패: {e2}")
                 return pd.DataFrame()
 
-            df = df.rename(columns={
-                "시가": "Open",
-                "고가": "High",
-                "저가": "Low",
-                "종가": "Close",
-                "거래량": "Volume"
-            })
-            df = df[["Open", "High", "Low", "Close", "Volume"]]
-
-        except Exception as e:
-            logger.error(f"[{code}] OHLCV collection error: {e}")
+        if df is None or df.empty:
             return pd.DataFrame()
+
+        df = df.rename(columns={
+            "시가": "Open",
+            "고가": "High",
+            "저가": "Low",
+            "종가": "Close",
+            "거래량": "Volume"
+        })
+        df = df[["Open", "High", "Low", "Close", "Volume"]]
 
     if not df.empty:
         _ohlcv_cache[cache_key] = {"data": df, "ts": _time.time()}

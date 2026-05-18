@@ -1,4 +1,5 @@
-const BASE_URL = 'http://localhost:8000';
+// 개발: localhost:8000 직접 / 프로덕션: 같은 origin(빈 문자열 = 상대경로)
+const BASE_URL: string = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
 export type Market = 'KR' | 'US';
 

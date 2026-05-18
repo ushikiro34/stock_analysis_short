@@ -1,5 +1,8 @@
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from typing import List, Optional
 import asyncio
 import logging
@@ -41,10 +44,16 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS — allow frontend dev server
+# CORS — 환경변수로 허용 origin 제어 (Railway 배포 시 CORS_ORIGINS 설정)
+_cors_origins_env = os.getenv("CORS_ORIGINS", "")
+_cors_origins = (
+    [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+    if _cors_origins_env
+    else ["http://localhost:5173", "http://localhost:3000"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,6 +71,23 @@ app.include_router(live_router)
 app.include_router(briefing_router)
 app.include_router(insights_router)
 app.include_router(watchlist_router)
+
+# ── Health check (Railway 헬스체크) ──────────────────────────
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+# ── Frontend static files (프로덕션 전용) ─────────────────────
+_frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _frontend_dist.exists():
+    _assets_dir = _frontend_dist / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+    logger.info(f"[Static] frontend dist 서빙: {_frontend_dist}")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _serve_spa(_full_path: str):
+        return FileResponse(str(_frontend_dist / "index.html"))
 
 
 # ── Background Tasks ──────────────────────────────────────────

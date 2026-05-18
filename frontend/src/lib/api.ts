@@ -206,6 +206,7 @@ export interface OptimizeRequest {
 export interface OptimizeBestParams {
     stop_loss_ratio: number;
     take_profit_ratio: number;
+    take_profit_targets?: Array<{ ratio: number; volume_pct: number; name?: string }>;
     max_holding_days: number;
     min_entry_score: number;
     position_size_pct: number;
@@ -222,6 +223,7 @@ export interface OptimizeBestPerformance {
 export interface OptimizeTopResult {
     params: OptimizeBestParams;
     performance: { roi: number; [key: string]: unknown };
+    roi?: number;
 }
 
 export interface OptimizeResult {

@@ -333,8 +333,8 @@ export default function InvestmentJournalDashboard({ isVisible }: { isVisible?: 
             av = a.entry_time ? new Date(a.entry_time).getTime() : 0;
             bv = b.entry_time ? new Date(b.entry_time).getTime() : 0;
         } else {
-            av = (a as Record<string, number>)[sortKey] ?? 0;
-            bv = (b as Record<string, number>)[sortKey] ?? 0;
+            av = (a as unknown as Record<string, number>)[sortKey] ?? 0;
+            bv = (b as unknown as Record<string, number>)[sortKey] ?? 0;
         }
         return sortDir === 'asc' ? av - bv : bv - av;
     });

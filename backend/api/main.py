@@ -86,7 +86,7 @@ if _frontend_dist.exists():
     logger.info(f"[Static] frontend dist 서빙: {_frontend_dist}")
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    async def _serve_spa(_full_path: str):
+    async def _serve_spa(full_path: str):
         return FileResponse(str(_frontend_dist / "index.html"))
 
 

@@ -47,6 +47,15 @@ async def stop_paper_trading(db: AsyncSession = Depends(get_db)):
     return {"status": "stopped", **paper_engine.get_status()}
 
 
+@router.post("/restart")
+async def restart_paper_trading(config: StartConfig, db: AsyncSession = Depends(get_db)):
+    """실행 중이더라도 강제 재시작 (stop → start)"""
+    if paper_engine.is_running:
+        await paper_engine.stop(db)
+    await paper_engine.start(config.model_dump(), db)
+    return {"status": "restarted", **paper_engine.get_status()}
+
+
 @router.post("/reset")
 async def reset_paper_trading(db: AsyncSession = Depends(get_db)):
     """전체 초기화 (포지션·거래내역·이력 삭제, 자본 리셋)"""
@@ -99,13 +108,23 @@ async def close_position(code: str, db: AsyncSession = Depends(get_db)):
 @router.get("/trades")
 async def get_trades(limit: int = 50, db: AsyncSession = Depends(get_db)):
     """체결 거래 내역 조회 (최신 N건)"""
-    return await paper_engine.get_trades(db, limit)
+    try:
+        return await paper_engine.get_trades(db, limit)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"get_trades error: {e}")
+        return []
 
 
 @router.get("/history")
 async def get_history(limit: int = 200, db: AsyncSession = Depends(get_db)):
     """포트폴리오 가치 변화 이력"""
-    return await paper_engine.get_history(db, limit)
+    try:
+        return await paper_engine.get_history(db, limit)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"get_history error: {e}")
+        return []
 
 
 @router.get("/journal/{trade_id}/analyze")

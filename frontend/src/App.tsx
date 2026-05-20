@@ -277,19 +277,20 @@ function App() {
         <div className="h-screen flex flex-col bg-background text-slate-100">
             {/* Top Navigation Bar */}
             <header className="border-b border-slate-700 bg-surface">
-                <div className="flex items-center justify-between px-6 py-4">
+                <div className="flex items-center justify-between px-3 py-2 md:px-6 md:py-4">
                     {/* Logo & Title */}
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 md:gap-3">
                         <button
                             onClick={() => window.location.reload()}
                             title="새로고침"
-                            className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center hover:bg-primary/80 active:scale-95 transition-all cursor-pointer"
+                            className="w-8 h-8 md:w-10 md:h-10 bg-primary rounded-lg flex items-center justify-center hover:bg-primary/80 active:scale-95 transition-all cursor-pointer"
                         >
-                            <Activity size={24} className="text-white" />
+                            <Activity size={20} className="text-white md:hidden" />
+                            <Activity size={24} className="text-white hidden md:block" />
                         </button>
                         <div>
-                            <h1 className="text-xl font-bold">Stock Analysis System</h1>
-                            <p className="text-xs text-slate-400">단타매매 전문 시스템 v2.0</p>
+                            <h1 className="text-base md:text-xl font-bold leading-tight">Stock Analysis</h1>
+                            <p className="text-xs text-slate-400 hidden md:block">단타매매 전문 시스템 v2.0</p>
                         </div>
                     </div>
 
@@ -463,10 +464,10 @@ function App() {
                                 </div>
                             )}
                         </div>
-                        <div className="flex gap-2 bg-slate-800 rounded-lg p-1">
+                        <div className="flex gap-1 bg-slate-800 rounded-lg p-0.5 md:p-1">
                             <button
                                 onClick={() => handleMarketChange('KR')}
-                                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                className={`px-2 py-1 md:px-4 md:py-2 rounded-md text-xs md:text-sm font-medium transition-colors ${
                                     market === 'KR'
                                         ? 'bg-primary text-white'
                                         : 'text-slate-400 hover:text-slate-200'
@@ -476,7 +477,7 @@ function App() {
                             </button>
                             <button
                                 onClick={() => handleMarketChange('US')}
-                                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                className={`px-2 py-1 md:px-4 md:py-2 rounded-md text-xs md:text-sm font-medium transition-colors ${
                                     market === 'US'
                                         ? 'bg-primary text-white'
                                         : 'text-slate-400 hover:text-slate-200'
@@ -488,33 +489,35 @@ function App() {
                     </div>
                 </div>
 
-                {/* Tab Navigation + Stock Filter (같은 라인) */}
-                <div className="flex items-center justify-between px-6 py-2.5 gap-4">
-                    {/* Tabs */}
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        {tabs.map(tab => {
-                            const Icon = tab.icon;
-                            const isActive = activeTab === tab.id;
-                            return (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => setActiveTab(tab.id)}
-                                    className={`flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg border transition-all ${
-                                        isActive
-                                            ? 'bg-slate-700 border-slate-500 text-white shadow-sm'
-                                            : 'bg-transparent border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200 hover:bg-slate-800/60'
-                                    }`}
-                                >
-                                    <Icon size={15} className={isActive ? tab.color : 'text-slate-500'} />
-                                    <span>{tab.label}</span>
-                                </button>
-                            );
-                        })}
+                {/* Tab Navigation */}
+                <div className="px-2 pt-1.5 pb-1 md:px-6 md:py-2.5">
+                    <div className="overflow-x-auto scrollbar-hide">
+                        <div className="flex items-center gap-1 md:gap-1.5 min-w-max">
+                            {tabs.map(tab => {
+                                const Icon = tab.icon;
+                                const isActive = activeTab === tab.id;
+                                const isMobileHidden = tab.id === 'backtest' || tab.id === 'optimize';
+                                return (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`${isMobileHidden ? 'hidden md:flex' : 'flex'} items-center gap-1 md:gap-1.5 px-2.5 py-1.5 md:px-3.5 text-xs md:text-sm font-medium rounded-lg border transition-all shrink-0 ${
+                                            isActive
+                                                ? 'bg-slate-700 border-slate-500 text-white shadow-sm'
+                                                : 'bg-transparent border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200 hover:bg-slate-800/60'
+                                        }`}
+                                    >
+                                        <Icon size={13} className={isActive ? tab.color : 'text-slate-500'} />
+                                        <span>{tab.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
 
-                    {/* Stock Filter - 주식 분석 탭일 때만 표시, 같은 줄 오른쪽 */}
+                    {/* Stock Filter - 데스크탑에서만 표시 */}
                     {activeTab === 'stocks' && (
-                        <div className="flex items-center gap-3 shrink-0">
+                        <div className="hidden md:flex items-center gap-3 mt-2 shrink-0">
                             {/* 가격 필터 */}
                             <div className="flex items-center gap-2">
                                 <span className="text-xs text-slate-500 shrink-0">가격</span>
@@ -537,8 +540,6 @@ function App() {
                                     <span className="text-slate-300 text-xs">범위</span>
                                 </label>
                             </div>
-
-                            {/* 범위 입력 */}
                             <div className="flex items-center gap-1">
                                 {market === 'US' && <span className="text-slate-400 text-xs">$</span>}
                                 <input type="number" placeholder={market === 'KR' ? '최소' : 'From'}
@@ -558,11 +559,7 @@ function App() {
                                 />
                                 {market === 'KR' && <span className="text-slate-500 text-xs">원</span>}
                             </div>
-
-                            {/* 구분선 */}
                             <div className="h-4 w-px bg-slate-700" />
-
-                            {/* 종목명 검색 */}
                             <div className="flex items-center gap-1">
                                 <input type="text" placeholder="종목명 검색..."
                                     value={stockNameInput}
@@ -582,7 +579,7 @@ function App() {
             </header>
 
             {/* Main Content Area */}
-            <main className="flex-1 overflow-hidden p-6">
+            <main className="flex-1 overflow-hidden p-2 md:p-6">
                 <div className={`h-full ${activeTab === 'stocks' ? '' : 'hidden'}`}>
                     <StocksDashboard
                         market={market}
@@ -704,7 +701,7 @@ function App() {
             )}
 
             {/* Footer */}
-            <footer className="border-t border-slate-700 bg-surface px-6 py-3">
+            <footer className="hidden md:block border-t border-slate-700 bg-surface px-6 py-3">
                 <div className="flex items-center justify-between text-xs text-slate-500">
                     <p>&copy; 2026 Stock Analysis System. Not financial advice.</p>
                     <div className="flex items-center gap-4">

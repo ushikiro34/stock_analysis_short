@@ -368,9 +368,11 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
     }, [candles]);
 
     return (
-        <div className="h-full grid grid-cols-[280px_1fr_320px] gap-4">
-            {/* LEFT PANEL: Tab (급등주 / 눌림목) */}
-            <aside className="flex flex-col overflow-hidden">
+        <div className="h-full grid gap-2 md:gap-4
+            grid-cols-2 grid-rows-[280px_1fr]
+            md:grid-rows-1 md:grid-cols-[280px_1fr_320px]">
+            {/* LEFT PANEL: Tab (급등주 / 눌림목) — mobile col1 row1, desktop col1 */}
+            <aside className="flex flex-col overflow-hidden col-start-1 row-start-1">
                 {/* Tab Switcher */}
                 <div className="flex mb-3 bg-slate-800/60 rounded-lg p-0.5 shrink-0">
                     <button
@@ -547,8 +549,8 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                 )}
             </aside>
 
-            {/* CENTER PANEL: Stock Info + Chart + Info Cards */}
-            <main className="flex flex-col overflow-hidden min-h-0">
+            {/* CENTER PANEL: Stock Info + Chart + Info Cards — mobile col1+2 row2, desktop col2 */}
+            <main className="flex flex-col overflow-hidden min-h-0 col-span-2 row-start-2 md:col-span-1 md:col-start-2 md:row-start-1">
                 {!stockCode && !loading && (
                     <div className="flex items-center justify-center h-full text-slate-500">
                         <p className="text-lg">좌측에서 종목을 선택하세요</p>
@@ -571,11 +573,11 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                 {stockCode && !loading && !error && (
                     <>
                         {/* ── 상단: 종목 정보 헤더 ─────────────────────────── */}
-                        <div className="bg-surface rounded-xl border border-slate-700 p-4 mb-3 shrink-0">
+                        <div className="bg-surface rounded-xl border border-slate-700 p-2.5 md:p-4 mb-2 md:mb-3 shrink-0">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                        <h2 className="text-2xl font-bold">{stockName}</h2>
+                                    <div className="flex items-center gap-1.5 md:gap-2 mb-1 flex-wrap">
+                                        <h2 className="text-lg md:text-2xl font-bold">{stockName}</h2>
                                         <button
                                             onClick={toggleWatchlist}
                                             title={isWatchlisted ? '관심종목 해제' : '관심종목 추가'}
@@ -605,16 +607,16 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                                             </span>
                                         )}
                                     </div>
-                                    <p className="text-sm text-slate-400">{stockCode} · {market}</p>
+                                    <p className="text-xs md:text-sm text-slate-400">{stockCode} · {market}</p>
                                 </div>
                                 {surgeInfo && (
                                     <div className="text-right">
-                                        <div className="text-3xl font-mono font-bold mb-1">
+                                        <div className="text-xl md:text-3xl font-mono font-bold mb-0.5 md:mb-1">
                                             {market === 'US' ? '$' : ''}{surgeInfo.price.toLocaleString()}{market === 'KR' ? '원' : ''}
                                         </div>
-                                        <div className={`flex items-center justify-end gap-1 text-sm font-mono ${surgeInfo.change_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                                            {surgeInfo.change_rate > 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
-                                            <span>
+                                        <div className={`flex items-center justify-end gap-1 text-xs md:text-sm font-mono ${surgeInfo.change_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                                            {surgeInfo.change_rate > 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+                                            <span className="hidden md:inline">
                                                 {surgeInfo.change_rate > 0 ? '+' : ''}{market === 'US' ? '$' : ''}
                                                 {surgeInfo.change_price.toLocaleString()}{market === 'KR' ? '원' : ''}
                                             </span>
@@ -959,65 +961,65 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                 )}
             </main>
 
-            {/* RIGHT PANEL: Info Cards */}
-            <aside className="overflow-y-auto space-y-3">
+            {/* RIGHT PANEL: Info Cards — mobile col2 row1, desktop col3 */}
+            <aside className="overflow-y-auto space-y-2 md:space-y-3 col-start-2 row-start-1 md:col-start-3">
                 {stockCode && !loading && !error && (
                     <>
                         {/* Score Card */}
-                        <div className="bg-surface rounded-xl border border-slate-700 p-4">
-                            <h3 className="text-sm font-bold text-slate-300 mb-3">종합 점수</h3>
-                            <div className="text-center mb-4">
-                                <div className="text-4xl font-bold text-primary mb-1">
+                        <div className="bg-surface rounded-xl border border-slate-700 p-2.5 md:p-4">
+                            <h3 className="text-xs md:text-sm font-bold text-slate-300 mb-2 md:mb-3">종합 점수</h3>
+                            <div className="text-center mb-2 md:mb-4">
+                                <div className="text-3xl md:text-4xl font-bold text-primary mb-0.5 md:mb-1">
                                     {scoreProps.total.toFixed(0)}
                                 </div>
                                 <div className="text-xs text-slate-400">/ 100점</div>
                             </div>
-                            <div className="space-y-2 text-sm">
+                            <div className="space-y-1.5 md:space-y-2 text-xs md:text-sm">
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-400">가치</span>
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-20 h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div className="flex items-center gap-1.5 md:gap-2">
+                                        <div className="w-12 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
                                             <div
                                                 className="h-full bg-green-500"
                                                 style={{ width: `${(scoreProps.value / 40) * 100}%` }}
                                             />
                                         </div>
-                                        <span className="font-mono text-slate-300 w-8 text-right">
+                                        <span className="font-mono text-slate-300 w-6 md:w-8 text-right">
                                             {scoreProps.value.toFixed(0)}
                                         </span>
                                     </div>
                                 </div>
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-400">추세</span>
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-20 h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div className="flex items-center gap-1.5 md:gap-2">
+                                        <div className="w-12 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
                                             <div
                                                 className="h-full bg-blue-500"
                                                 style={{ width: `${(scoreProps.trend / 30) * 100}%` }}
                                             />
                                         </div>
-                                        <span className="font-mono text-slate-300 w-8 text-right">
+                                        <span className="font-mono text-slate-300 w-6 md:w-8 text-right">
                                             {scoreProps.trend.toFixed(0)}
                                         </span>
                                     </div>
                                 </div>
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-400">안정성</span>
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-20 h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div className="flex items-center gap-1.5 md:gap-2">
+                                        <div className="w-12 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
                                             <div
                                                 className="h-full bg-purple-500"
                                                 style={{ width: `${(scoreProps.stability / 20) * 100}%` }}
                                             />
                                         </div>
-                                        <span className="font-mono text-slate-300 w-8 text-right">
+                                        <span className="font-mono text-slate-300 w-6 md:w-8 text-right">
                                             {scoreProps.stability.toFixed(0)}
                                         </span>
                                     </div>
                                 </div>
                                 {scoreProps.risk > 0 && (
-                                    <div className="flex justify-between items-center pt-2 border-t border-slate-700">
-                                        <span className="text-red-400">리스크 감점</span>
+                                    <div className="flex justify-between items-center pt-1.5 border-t border-slate-700">
+                                        <span className="text-red-400">리스크</span>
                                         <span className="font-mono text-red-400">-{scoreProps.risk.toFixed(0)}</span>
                                     </div>
                                 )}

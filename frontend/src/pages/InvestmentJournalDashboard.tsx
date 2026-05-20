@@ -478,7 +478,7 @@ export default function InvestmentJournalDashboard({ isVisible }: { isVisible?: 
 
             {/* ── 요약 카드 ────────────────────────────────────────── */}
             {searched && (
-                <div className="grid grid-cols-5 gap-3 shrink-0">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-5 md:gap-3 shrink-0">
                     <SummaryCard
                         label="총 거래수"
                         value={`${total}건`}

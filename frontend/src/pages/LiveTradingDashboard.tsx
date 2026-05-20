@@ -282,7 +282,7 @@ function InsightsTab({ analysis, source, loading, error, applyingParam, onSource
                     {analysis.total_trades > 0 && (
                         <>
                             {/* 전체 통계 요약 */}
-                            <div className="grid grid-cols-4 gap-3">
+                            <div className="grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
                                 {[
                                     { label: '총 거래', value: `${analysis.total_trades}건`, icon: <FileText size={14} /> },
                                     { label: '승률', value: `${analysis.win_rate.toFixed(1)}%`, color: analysis.win_rate >= 50 ? 'text-green-400' : 'text-red-400', icon: <Target size={14} /> },
@@ -664,7 +664,7 @@ export default function LiveTradingDashboard({ isVisible }: Props) {
             )}
 
             {/* 상단: 컨트롤 + 잔고 */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-4">
                 {/* 컨트롤 카드 */}
                 <div className="col-span-1 bg-surface border border-slate-700 rounded-xl p-4 flex flex-col gap-3">
                     <div className="flex items-center justify-between">
@@ -849,7 +849,7 @@ export default function LiveTradingDashboard({ isVisible }: Props) {
                     {activeTab === 'trades' && tradesResp && (
                         <div>
                             {/* 요약 */}
-                            <div className="grid grid-cols-4 gap-3 mb-4">
+                            <div className="grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3 mb-4">
                                 {[
                                     { label: '총 거래', value: `${tradesResp.total}건`, color: 'text-slate-200' },
                                     { label: '총 손익', value: fmtKRW(tradesResp.total_pnl), color: tradesResp.total_pnl >= 0 ? 'text-green-400' : 'text-red-400' },

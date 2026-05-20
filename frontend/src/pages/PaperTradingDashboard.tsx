@@ -466,7 +466,7 @@ export default function PaperTradingDashboard({ onNavigateToStock, isVisible }: 
                         </span>
                     )}
                 </div>
-                <div className="grid grid-cols-3 gap-4 text-sm">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-4 text-sm">
                     <label className="flex flex-col gap-1">
                         <span className="text-slate-400">초기 자본 (원)</span>
                         <input type="number" value={config.initial_capital}
@@ -537,7 +537,7 @@ export default function PaperTradingDashboard({ onNavigateToStock, isVisible }: 
 
             {/* ── 계좌 요약 카드 ──────────────────────────────── */}
             {status && (
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
                     {[
                         { label: '총 자산', value: fmtKRW(status.total_value), icon: DollarSign, color: 'text-cyan-400' },
                         { label: '현금', value: fmtKRW(status.cash), icon: DollarSign, color: 'text-slate-300' },
@@ -556,7 +556,7 @@ export default function PaperTradingDashboard({ onNavigateToStock, isVisible }: 
             )}
 
             {/* ── 포지션 + 거래 내역 ─────────────────────────── */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
 
                 {/* 보유 포지션 */}
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">

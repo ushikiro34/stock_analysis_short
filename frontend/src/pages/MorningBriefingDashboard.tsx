@@ -563,7 +563,7 @@ export default function MorningBriefingDashboard({ isVisible, onNavigateToStock 
                     )}
 
                     {/* 3분할 카드 */}
-                    <div className="flex-1 overflow-hidden grid grid-cols-3 gap-4 min-h-0">
+                    <div className="flex-1 overflow-hidden grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-4 min-h-0">
                         {/* DART 공시 */}
                         <div className="bg-slate-900/60 border border-slate-700/60 rounded-xl flex flex-col overflow-hidden">
                             <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700/60 shrink-0">

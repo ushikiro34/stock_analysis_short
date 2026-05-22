@@ -371,7 +371,7 @@ export default function InvestmentJournalDashboard({ isVisible }: { isVisible?: 
         <div className="h-full flex flex-col gap-4 overflow-hidden">
 
             {/* ── 필터 바 ─────────────────────────────────────────── */}
-            <div className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 flex flex-wrap items-end gap-3 shrink-0">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-3 flex flex-wrap items-end gap-2 md:gap-3 shrink-0">
                 {/* 조회 기간 */}
                 <div className="flex flex-col gap-1">
                     <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider px-1">조회기간</span>
@@ -387,14 +387,14 @@ export default function InvestmentJournalDashboard({ isVisible }: { isVisible?: 
                             type="date"
                             value={dateFrom}
                             onChange={e => setDateFrom(e.target.value)}
-                            className="bg-transparent text-sm text-slate-200 focus:outline-none w-32"
+                            className="bg-transparent text-xs md:text-sm text-slate-200 focus:outline-none w-28 md:w-32"
                         />
                         <span className="text-slate-600 text-xs px-0.5">~</span>
                         <input
                             type="date"
                             value={dateTo}
                             onChange={e => setDateTo(e.target.value)}
-                            className="bg-transparent text-sm text-slate-200 focus:outline-none w-32"
+                            className="bg-transparent text-xs md:text-sm text-slate-200 focus:outline-none w-28 md:w-32"
                         />
                         <button
                             onClick={() => shiftDate(1)}

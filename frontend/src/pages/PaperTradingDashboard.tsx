@@ -396,24 +396,24 @@ export default function PaperTradingDashboard({ onNavigateToStock, isVisible }: 
         <div className="h-full flex flex-col gap-5 overflow-y-auto">
 
             {/* ── 헤더 ───────────────────────────────────────── */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div>
-                    <h2 className="text-2xl font-bold flex items-center gap-2">
-                        <Activity className="text-cyan-400" size={28} />
+                    <h2 className="text-base md:text-2xl font-bold flex items-center gap-2 flex-wrap">
+                        <Activity className="text-cyan-400 shrink-0" size={20} />
                         모의투자 시뮬레이션
                         {status?.pre_surge_mode && (
-                            <span className="text-sm font-semibold text-purple-300 bg-purple-500/20 border border-purple-500/40 px-2 py-0.5 rounded-full">
+                            <span className="text-xs font-semibold text-purple-300 bg-purple-500/20 border border-purple-500/40 px-2 py-0.5 rounded-full">
                                 ⚡ 급등 전 시그널
                             </span>
                         )}
                     </h2>
-                    <p className="text-slate-400 text-sm mt-1">
+                    <p className="hidden md:block text-slate-400 text-sm mt-1">
                         실시간 데이터로 자동매매를 테스트합니다 (실제 거래 없음)
                     </p>
                 </div>
 
                 {/* 컨트롤 버튼 */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
                     <Stopwatch
                         startedAt={status?.is_running ? (status.started_at ?? null) : null}
                         elapsedSeconds={status?.elapsed_seconds ?? 0}
@@ -422,27 +422,27 @@ export default function PaperTradingDashboard({ onNavigateToStock, isVisible }: 
                         <button
                             onClick={handleStart}
                             disabled={actionLoading}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                            className="flex items-center gap-1.5 px-3 py-2 md:px-5 md:py-2.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50"
                         >
-                            {actionLoading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
+                            {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                             시작
                         </button>
                     ) : (
                         <button
                             onClick={handleStop}
                             disabled={actionLoading}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-slate-600 hover:bg-slate-500 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                            className="flex items-center gap-1.5 px-3 py-2 md:px-5 md:py-2.5 bg-slate-600 hover:bg-slate-500 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50"
                         >
-                            {actionLoading ? <Loader2 size={16} className="animate-spin" /> : <StopCircle size={16} />}
+                            {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <StopCircle size={14} />}
                             중지
                         </button>
                     )}
                     <button
                         onClick={handleReset}
                         disabled={actionLoading}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-red-900/40 hover:bg-red-800/60 border border-red-700/50 rounded-lg text-sm transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-3 py-2 md:px-4 bg-red-900/40 hover:bg-red-800/60 border border-red-700/50 rounded-lg text-sm transition-colors disabled:opacity-50"
                     >
-                        <RotateCcw size={14} />
+                        <RotateCcw size={13} />
                         초기화
                     </button>
                 </div>

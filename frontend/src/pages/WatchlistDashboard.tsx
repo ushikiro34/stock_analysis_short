@@ -211,7 +211,7 @@ export default function WatchlistDashboard({ market, isVisible = false, onNaviga
         <div className="h-full flex flex-col gap-4 overflow-hidden">
 
             {/* ── 툴바 ─────────────────────────────────────────── */}
-            <div className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 flex flex-wrap items-end gap-3 shrink-0">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-3 flex flex-wrap items-center gap-2 md:gap-3 shrink-0">
                 <div className="flex items-center gap-2">
                     <Star size={16} className="text-amber-400" />
                     <span className="text-sm font-semibold text-slate-200">관심종목</span>

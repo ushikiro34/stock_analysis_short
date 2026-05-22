@@ -490,14 +490,14 @@ export default function MorningBriefingDashboard({ isVisible, onNavigateToStock 
             )}
 
             {/* 헤더 */}
-            <div className="flex items-center justify-between mb-4 shrink-0">
-                <div className="flex items-center gap-3">
-                    <h2 className="text-lg font-bold text-white">장전 브리핑</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3 md:mb-4 shrink-0">
+                <div className="flex flex-col gap-0.5 md:flex-row md:items-center md:gap-3">
+                    <h2 className="text-base font-bold text-white">장전 브리핑</h2>
                     {briefing && (
-                        <span className="text-sm text-slate-400">
+                        <span className="text-xs text-slate-400">
                             {briefing.briefing_date}
                             {briefing.generated_at && (
-                                <span className="ml-1.5 text-xs text-green-400">
+                                <span className="ml-1 text-xs text-green-400">
                                     생성완료 {fmtTime(briefing.generated_at)}
                                 </span>
                             )}
@@ -505,12 +505,12 @@ export default function MorningBriefingDashboard({ isVisible, onNavigateToStock 
                     )}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 shrink-0">
                     {history.length > 0 && (
                         <select
                             value={selectedDate}
                             onChange={e => handleDateSelect(e.target.value)}
-                            className="px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-primary"
+                            className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-primary max-w-[120px]"
                         >
                             <option value="">오늘</option>
                             {history.map(h => (
@@ -523,11 +523,11 @@ export default function MorningBriefingDashboard({ isVisible, onNavigateToStock 
                     <button onClick={() => loadBriefing(selectedDate || undefined)} disabled={loading}
                         className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
                         title="새로고침">
-                        <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+                        <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                     </button>
                     <button onClick={() => handleGenerate(!!briefing)} disabled={generating}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50">
-                        <Sparkles size={13} className={generating ? 'animate-pulse' : ''} />
+                        className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50">
+                        <Sparkles size={12} className={generating ? 'animate-pulse' : ''} />
                         {generating ? '생성 중...' : briefing ? '재생성' : '브리핑 생성'}
                     </button>
                 </div>

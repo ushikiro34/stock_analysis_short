@@ -71,34 +71,34 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
     return (
         <div className="h-full flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-3 md:mb-6">
                 <div>
-                    <h2 className="text-2xl font-bold flex items-center gap-2">
-                        <TrendingUp className="text-green-400" size={28} />
+                    <h2 className="text-lg md:text-2xl font-bold flex items-center gap-2">
+                        <TrendingUp className="text-green-400" size={20} />
                         매매 신호
                     </h2>
-                    <p className="text-slate-400 text-sm mt-1">
+                    <p className="text-slate-400 text-xs md:text-sm mt-0.5">
                         급등주에서 자동으로 진입 기회를 탐색합니다
                     </p>
                 </div>
                 <button
                     onClick={loadSignals}
                     disabled={loading}
-                    className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/80 rounded-lg transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary hover:bg-primary/80 rounded-lg transition-colors disabled:opacity-50 shrink-0"
                 >
-                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                     새로고침
                 </button>
             </div>
 
             {/* Controls */}
-            <div className="flex gap-4 mb-6">
+            <div className="flex flex-wrap gap-2 mb-3 md:gap-4 md:mb-6">
                 <div>
-                    <label className="block text-sm text-slate-400 mb-2">전략</label>
+                    <label className="block text-xs md:text-sm text-slate-400 mb-1.5">전략</label>
                     <select
                         value={strategy}
                         onChange={(e) => setStrategy(e.target.value)}
-                        className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary"
+                        className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs md:text-sm focus:outline-none focus:border-primary"
                     >
                         <option value="combined">종합 전략</option>
                         <option value="volume">거래량 기반</option>
@@ -109,11 +109,11 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
                     </select>
                 </div>
                 <div>
-                    <label className="block text-sm text-slate-400 mb-2">최소 점수</label>
+                    <label className="block text-xs md:text-sm text-slate-400 mb-1.5">최소 점수</label>
                     <select
                         value={minScore}
                         onChange={(e) => setMinScore(Number(e.target.value))}
-                        className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary"
+                        className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs md:text-sm focus:outline-none focus:border-primary"
                     >
                         <option value="50">50점 이상</option>
                         <option value="60">60점 이상</option>
@@ -158,10 +158,10 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
                                     }`}
                                 >
                                     {/* Header */}
-                                    <div className="flex items-start justify-between mb-4">
+                                    <div className="flex items-start justify-between mb-3">
                                         <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                                <h3 className="text-xl font-bold">
+                                            <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                                                <h3 className="text-base md:text-xl font-bold">
                                                     {signal.stock_info?.name
                                                         ? `${signal.stock_info.name}(${signal.code})`
                                                         : signal.code}
@@ -182,39 +182,39 @@ export default function SignalsDashboard({ market, focusCode, onFocusDone }: Sig
                                             </div>
                                             {signal.current_price && (
                                                 <div className="flex items-center gap-1 text-slate-300">
-                                                    <span className="text-sm">[주가 :</span>
-                                                    <span className="text-2xl font-bold font-mono">
+                                                    <span className="text-xs">[주가 :</span>
+                                                    <span className="text-lg md:text-2xl font-bold font-mono">
                                                         {market === 'US' ? '$' : ''}{signal.current_price.toLocaleString()}{market === 'KR' ? '원' : ''}
                                                     </span>
-                                                    <span className="text-sm">]</span>
+                                                    <span className="text-xs">]</span>
                                                 </div>
                                             )}
                                         </div>
-                                        <div className="text-right ml-3 shrink-0">
-                                            <div className="text-3xl font-bold">{signal.score.toFixed(0)}</div>
+                                        <div className="text-right ml-2 shrink-0">
+                                            <div className="text-xl md:text-3xl font-bold">{signal.score.toFixed(0)}</div>
                                             <div className="text-xs text-slate-400">점수</div>
                                         </div>
                                     </div>
 
                                     {/* Breakdown */}
                                     {signal.breakdown && (
-                                        <div className="grid grid-cols-3 gap-3 mb-4">
+                                        <div className="grid grid-cols-3 gap-2 mb-3">
                                             {signal.breakdown.volume && (
-                                                <div className="bg-slate-900/30 rounded-lg p-3">
-                                                    <div className="text-xs text-slate-400 mb-1">거래량</div>
-                                                    <div className="text-lg font-bold">{signal.breakdown.volume.score.toFixed(0)}</div>
+                                                <div className="bg-slate-900/30 rounded-lg p-2">
+                                                    <div className="text-xs text-slate-400 mb-0.5">거래량</div>
+                                                    <div className="text-base md:text-lg font-bold">{signal.breakdown.volume.score.toFixed(0)}</div>
                                                 </div>
                                             )}
                                             {signal.breakdown.technical && (
-                                                <div className="bg-slate-900/30 rounded-lg p-3">
-                                                    <div className="text-xs text-slate-400 mb-1">기술적 지표</div>
-                                                    <div className="text-lg font-bold">{signal.breakdown.technical.score.toFixed(0)}</div>
+                                                <div className="bg-slate-900/30 rounded-lg p-2">
+                                                    <div className="text-xs text-slate-400 mb-0.5">기술적</div>
+                                                    <div className="text-base md:text-lg font-bold">{signal.breakdown.technical.score.toFixed(0)}</div>
                                                 </div>
                                             )}
                                             {signal.breakdown.pattern && (
-                                                <div className="bg-slate-900/30 rounded-lg p-3">
-                                                    <div className="text-xs text-slate-400 mb-1">패턴</div>
-                                                    <div className="text-lg font-bold">{signal.breakdown.pattern.score.toFixed(0)}</div>
+                                                <div className="bg-slate-900/30 rounded-lg p-2">
+                                                    <div className="text-xs text-slate-400 mb-0.5">패턴</div>
+                                                    <div className="text-base md:text-lg font-bold">{signal.breakdown.pattern.score.toFixed(0)}</div>
                                                 </div>
                                             )}
                                         </div>

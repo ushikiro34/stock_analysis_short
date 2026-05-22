@@ -372,7 +372,7 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
             grid-cols-2 grid-rows-[280px_1fr]
             md:grid-rows-1 md:grid-cols-[280px_1fr_320px]">
             {/* LEFT PANEL: Tab (급등주 / 눌림목) — mobile col1 row1, desktop col1 */}
-            <aside className="flex flex-col overflow-hidden col-start-1 row-start-1">
+            <aside className="min-w-0 flex flex-col overflow-hidden col-start-1 row-start-1">
                 {/* Tab Switcher */}
                 <div className="flex mb-3 bg-slate-800/60 rounded-lg p-0.5 shrink-0">
                     <button
@@ -962,14 +962,14 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
             </main>
 
             {/* RIGHT PANEL: Info Cards — mobile col2 row1, desktop col3 */}
-            <aside className="overflow-y-auto space-y-2 md:space-y-3 col-start-2 row-start-1 md:col-start-3">
+            <aside className="min-w-0 overflow-y-auto overflow-x-hidden space-y-2 md:space-y-3 col-start-2 row-start-1 md:col-start-3">
                 {stockCode && !loading && !error && (
                     <>
                         {/* Score Card */}
                         <div className="bg-surface rounded-xl border border-slate-700 p-2.5 md:p-4">
                             <h3 className="text-xs md:text-sm font-bold text-slate-300 mb-2 md:mb-3">종합 점수</h3>
                             <div className="text-center mb-2 md:mb-4">
-                                <div className="text-3xl md:text-4xl font-bold text-primary mb-0.5 md:mb-1">
+                                <div className="text-2xl md:text-4xl font-bold text-primary mb-0.5 md:mb-1">
                                     {scoreProps.total.toFixed(0)}
                                 </div>
                                 <div className="text-xs text-slate-400">/ 100점</div>
@@ -977,42 +977,42 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
                             <div className="space-y-1.5 md:space-y-2 text-xs md:text-sm">
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-400">가치</span>
-                                    <div className="flex items-center gap-1.5 md:gap-2">
-                                        <div className="w-12 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div className="flex items-center gap-1 md:gap-2">
+                                        <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
                                             <div
                                                 className="h-full bg-green-500"
                                                 style={{ width: `${(scoreProps.value / 40) * 100}%` }}
                                             />
                                         </div>
-                                        <span className="font-mono text-slate-300 w-6 md:w-8 text-right">
+                                        <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
                                             {scoreProps.value.toFixed(0)}
                                         </span>
                                     </div>
                                 </div>
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-400">추세</span>
-                                    <div className="flex items-center gap-1.5 md:gap-2">
-                                        <div className="w-12 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div className="flex items-center gap-1 md:gap-2">
+                                        <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
                                             <div
                                                 className="h-full bg-blue-500"
                                                 style={{ width: `${(scoreProps.trend / 30) * 100}%` }}
                                             />
                                         </div>
-                                        <span className="font-mono text-slate-300 w-6 md:w-8 text-right">
+                                        <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
                                             {scoreProps.trend.toFixed(0)}
                                         </span>
                                     </div>
                                 </div>
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-400">안정성</span>
-                                    <div className="flex items-center gap-1.5 md:gap-2">
-                                        <div className="w-12 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div className="flex items-center gap-1 md:gap-2">
+                                        <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
                                             <div
                                                 className="h-full bg-purple-500"
                                                 style={{ width: `${(scoreProps.stability / 20) * 100}%` }}
                                             />
                                         </div>
-                                        <span className="font-mono text-slate-300 w-6 md:w-8 text-right">
+                                        <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
                                             {scoreProps.stability.toFixed(0)}
                                         </span>
                                     </div>

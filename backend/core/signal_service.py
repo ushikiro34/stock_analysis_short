@@ -878,13 +878,28 @@ async def scan_dart_disclosure_stocks() -> List[Dict]:
 
     # fetch_today_disclosures는 내부적으로 전일~당일 범위 조회
     try:
-        unique_items = await fetch_today_disclosures()
+        raw_items = await fetch_today_disclosures()
     except Exception as e:
         logger.warning(f"[DartScan] 공시 조회 실패: {e}")
         return []
 
-    if not unique_items:
+    if not raw_items:
         return []
+
+    # 동일 종목 중복 제거 — 공시 유형 우선순위가 높은 것 하나만 남김
+    _type_priority = {
+        "실적발표": 7, "대규모계약": 6, "합병·인수": 5,
+        "자사주취득": 4, "투자결정": 3, "CB발행": 2, "BW발행": 2, "유상증자": 1,
+    }
+    best_by_code: dict = {}
+    for item in raw_items:
+        code = item.get("stock_code", "")
+        if not code:
+            continue
+        pri = _type_priority.get(item.get("dart_type", ""), 0)
+        if code not in best_by_code or pri > _type_priority.get(best_by_code[code].get("dart_type", ""), 0):
+            best_by_code[code] = item
+    unique_items = list(best_by_code.values())
 
     logger.info(f"[DartScan] 공시 {len(unique_items)}건 수집")
 

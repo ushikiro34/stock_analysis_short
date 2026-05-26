@@ -1,6 +1,6 @@
 """
-Morning Briefing API Router
-장전 브리핑 (DART 공시 + 뉴스 LLM + 테마 스캔)
+Briefing API Router
+장전/장마감 브리핑 (DART 공시 + 뉴스 LLM + 테마 스캔)
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from ...db.session import get_db
 
-router = APIRouter(prefix="/briefing", tags=["🌅 Morning Briefing"])
+router = APIRouter(prefix="/briefing", tags=["🌅 Briefing"])
 
 
 class GenerateRequest(BaseModel):
@@ -97,3 +97,77 @@ async def _get_briefing_by_date(date_str: str, db: AsyncSession):
     if not row:
         raise HTTPException(status_code=404, detail=f"{date_str} 브리핑 없음")
     return _row_to_dict(row)
+
+
+# ── 장마감 브리핑 ─────────────────────────────────────────────
+
+@router.get("/closing/today")
+async def get_today_closing(db: AsyncSession = Depends(get_db)):
+    """오늘 장마감 분석 조회 (없으면 즉시 생성)"""
+    try:
+        from zoneinfo import ZoneInfo
+        KST = ZoneInfo("Asia/Seoul")
+    except ImportError:
+        import pytz
+        KST = pytz.timezone("Asia/Seoul")
+    from datetime import datetime
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
+    from ...core.closing_briefing import generate_closing_briefing
+    result = await generate_closing_briefing(today_str, db)
+    if result is None:
+        raise HTTPException(status_code=500, detail="장마감 브리핑 생성 실패")
+    return result
+
+
+@router.get("/closing/history")
+async def get_closing_history(limit: int = 20, db: AsyncSession = Depends(get_db)):
+    """장마감 브리핑 이력 목록 (최신순)"""
+    from ...db.models import ClosingBriefing
+    rows = (await db.execute(
+        select(ClosingBriefing).order_by(ClosingBriefing.briefing_date.desc()).limit(limit)
+    )).scalars().all()
+    return [
+        {
+            "briefing_date":   r.briefing_date,
+            "total_candidates": r.total_candidates,
+            "ai_summary":      (r.ai_summary or "")[:120],
+            "generated_at":    (r.generated_at.isoformat() + "Z") if r.generated_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/closing/{briefing_date}")
+async def get_closing_by_date(briefing_date: str, db: AsyncSession = Depends(get_db)):
+    """특정 날짜 장마감 브리핑 조회 (YYYY-MM-DD)"""
+    from ...db.models import ClosingBriefing
+    from ...core.closing_briefing import _row_to_dict
+    row = (await db.execute(
+        select(ClosingBriefing).where(ClosingBriefing.briefing_date == briefing_date)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"{briefing_date} 장마감 브리핑 없음")
+    return _row_to_dict(row)
+
+
+@router.post("/closing/generate")
+async def generate_closing(req: GenerateRequest, db: AsyncSession = Depends(get_db)):
+    """장마감 브리핑 수동 생성 (force=true이면 재생성)"""
+    try:
+        from zoneinfo import ZoneInfo
+        KST = ZoneInfo("Asia/Seoul")
+    except ImportError:
+        import pytz
+        KST = pytz.timezone("Asia/Seoul")
+    from datetime import datetime
+    from ...core.closing_briefing import generate_closing_briefing, regenerate_closing_briefing
+
+    date_str = req.date or datetime.now(KST).strftime("%Y-%m-%d")
+    if req.force:
+        result = await regenerate_closing_briefing(date_str, db)
+    else:
+        result = await generate_closing_briefing(date_str, db)
+
+    if result is None:
+        raise HTTPException(status_code=500, detail="장마감 브리핑 생성 실패")
+    return result

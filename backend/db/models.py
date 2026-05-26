@@ -189,6 +189,26 @@ class MorningBriefing(Base):
     created_at           = Column(TIMESTAMP)
 
 
+# ── Closing Briefing ───────────────────────────────────────────
+
+class ClosingBriefing(Base):
+    """장마감 후 시장 분석 브리핑 — 오늘 주목 종목 + 내일 전략"""
+    __tablename__ = "closing_briefings"
+    id                   = Column(Integer, primary_key=True, autoincrement=True)
+    briefing_date        = Column(String(10), unique=True)    # YYYY-MM-DD (KST)
+    surge_stocks_json    = Column(Text, nullable=True)        # 오늘 급등 종목
+    fall_stocks_json     = Column(Text, nullable=True)        # 오늘 급락 종목
+    upper_limit_json     = Column(Text, nullable=True)        # 상한가 종목
+    volume_top_json      = Column(Text, nullable=True)        # 거래량 상위
+    dart_items_json      = Column(Text, nullable=True)        # 오늘 공시
+    news_items_json      = Column(Text, nullable=True)        # 오늘 뉴스
+    watch_candidates_json = Column(Text, nullable=True)       # LLM: 내일 주목 종목
+    total_candidates     = Column(Integer, default=0)
+    ai_summary           = Column(Text, nullable=True)        # LLM 내일 전망
+    generated_at         = Column(TIMESTAMP)
+    created_at           = Column(TIMESTAMP)
+
+
 # ── Watchlist ──────────────────────────────────────────────────
 
 class Watchlist(Base):

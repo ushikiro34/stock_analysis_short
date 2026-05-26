@@ -200,6 +200,20 @@ async def run_morning_briefing():
         await asyncio.sleep(300)
 
 
+async def run_closing_briefing():
+    """15:40 KST 이후 장마감 분석 자동 생성 (5분 주기 체크)"""
+    from ..core.closing_briefing import maybe_generate_today_closing
+    from ..db.session import AsyncSessionLocal
+    await asyncio.sleep(60)
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                await maybe_generate_today_closing(db)
+        except Exception as e:
+            logger.error(f"Closing briefing error: {e}")
+        await asyncio.sleep(300)
+
+
 async def run_live_trading():
     """5분 주기 실전 매매 루프 + 장 마감 후 일일 리포트 자동 생성"""
     from ..core.live_engine import live_engine
@@ -244,7 +258,8 @@ async def on_startup():
     paper_task = asyncio.create_task(run_paper_trading())
     asyncio.create_task(run_live_trading())
     asyncio.create_task(run_morning_briefing())
-    logger.info(f"Background tasks started: collector, scorer, paper_trading, live_trading, morning_briefing")
+    asyncio.create_task(run_closing_briefing())
+    logger.info(f"Background tasks started: collector, scorer, paper_trading, live_trading, morning_briefing, closing_briefing")
 
 
 # ── WebSocket ────────────────────────────────────────────────

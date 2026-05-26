@@ -69,6 +69,7 @@ _surge_cache: dict = {"data": [], "ts": 0}
 _us_surge_cache: dict = {"data": [], "ts": 0}
 _penny_stocks_cache: dict = {"data": [], "ts": 0}
 _pre_surge_cache: dict = {"data": [], "ts": 0}
+_dart_cache: dict = {"data": [], "ts": 0}
 _weekly_cache: dict = {}
 _minute_cache: dict = {}
 _daily_cache: dict = {}
@@ -262,6 +263,28 @@ async def get_pre_surge_stocks():
     except Exception as e:
         logger.error(f"Pre-surge scan error: {e}")
         return _pre_surge_cache["data"]
+
+
+@router.get("/dart-disclosures", response_model=List[dict])
+async def get_dart_disclosures():
+    """
+    DART 공시 기반 매매 후보 조회 (최근 2일)
+    - 실적발표/대규모계약/자사주취득 등 주요 공시 종목
+    - 기술적 패턴 점수 합산
+    - DART_API_KEY 환경변수 필요
+    """
+    now = time.time()
+    if now - _dart_cache["ts"] < 300:
+        return _dart_cache["data"]
+    try:
+        from ...core.signal_service import scan_dart_disclosure_stocks
+        results = await scan_dart_disclosure_stocks()
+        _dart_cache["data"] = results
+        _dart_cache["ts"] = now
+        return results
+    except Exception as e:
+        logger.error(f"DART scan error: {e}")
+        return _dart_cache["data"]
 
 
 @router.get("/penny-stocks", response_model=List[dict])

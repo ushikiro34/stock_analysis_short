@@ -3,8 +3,10 @@ Signal generation service for trading strategies.
 주식 데이터를 가져와서 진입/청산 신호를 생성하는 서비스
 """
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -714,31 +716,81 @@ async def scan_pullback_candidates(
     return results
 
 
+_SEORYUK_WATCHLIST_PATH = Path(__file__).parent / "seoryuk_watchlist.json"
+_SEORYUK_WATCHLIST_DAYS = 20  # 거래량 상위 등장 후 최대 추적 기간
+
+
+def _load_seoryuk_watchlist() -> dict:
+    """seoryuk 감시 종목 로드 — 20일 초과 항목 자동 정리"""
+    try:
+        if _SEORYUK_WATCHLIST_PATH.exists():
+            with open(_SEORYUK_WATCHLIST_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+            cutoff = (datetime.now() - timedelta(days=_SEORYUK_WATCHLIST_DAYS)).isoformat()
+            return {k: v for k, v in data.items() if v.get("added_at", "") > cutoff}
+    except Exception as e:
+        logger.warning(f"[SeoryukWL] 로드 실패: {e}")
+    return {}
+
+
+def _save_seoryuk_watchlist(watchlist: dict) -> None:
+    """seoryuk 감시 종목 저장"""
+    try:
+        with open(_SEORYUK_WATCHLIST_PATH, "w", encoding="utf-8") as f:
+            json.dump(watchlist, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"[SeoryukWL] 저장 실패: {e}")
+
+
 async def scan_pre_surge_stocks(market: str = "KR", limit: int = 200) -> List[Dict]:
     """
     전일 차트 기반 pre-surge 스캔 — 아직 오르지 않은 종목 중 패턴 감지
 
-    - 거래량 상위 200종목 스캔 (유니버스 확대)
+    - 거래량 상위 200종목 스캔 + 과거 20일 내 등장 감시 종목 (seoryuk watchlist) 합산
     - 당일 등락률 5% 초과 종목 제외 (이미 급등 시작한 종목 제거)
     - 건조회복/세력매집/압축횡보 패턴 감지
     - score 내림차순 정렬
+
+    watchlist 레이어:
+      거래량 상위에 등장했던 종목을 20일간 추적. 스파이크 이후 거래량건조(dryup) 구간에
+      있는 종목은 당일 거래량이 낮아 상위 스캔에서 누락되는데, watchlist가 이를 보완.
     """
     from .signals import PricePatternSignal
     from ..kis.rest_client import get_kis_client
 
+    # 1. 현재 거래량 상위 조회
     try:
         stocks = await get_kis_client().get_volume_rank(max_price=20000, limit=limit, min_change_rate=-999)
     except Exception as e:
         logger.error(f"[PreSurge] 거래량 조회 실패: {e}")
-        return []
+        stocks = []
 
     # 이미 많이 오른 종목 제외 (당일 +5% 초과 = 이미 급등 진행 중)
     stocks = [s for s in stocks if s.get("change_rate", 0) <= 5.0]
 
-    codes = [s["code"] for s in stocks]
+    # 2. seoryuk 감시 종목 로드 및 업데이트
+    watchlist = _load_seoryuk_watchlist()
+    now_iso = datetime.now().isoformat()
+    for s in stocks:
+        code = s["code"]
+        if code not in watchlist:
+            watchlist[code] = {"name": s["name"], "added_at": now_iso}
+    _save_seoryuk_watchlist(watchlist)
+
+    # 3. 스캔 풀 구성: 현재 거래량 상위 + 감시 종목 합산
+    volume_rank_set = {s["code"] for s in stocks}
     name_map = {s["code"]: s["name"] for s in stocks}
     price_map = {s["code"]: s["price"] for s in stocks}
     change_map = {s["code"]: s["change_rate"] for s in stocks}
+
+    extra_codes = [c for c in watchlist if c not in volume_rank_set]
+    for c in extra_codes:
+        name_map[c] = watchlist[c].get("name", c)
+
+    all_codes = list(volume_rank_set) + extra_codes
+    logger.info(
+        f"[PreSurge] 스캔 풀: 거래량상위 {len(volume_rank_set)}개 + 감시종목 {len(extra_codes)}개 = {len(all_codes)}개"
+    )
 
     scanner = PricePatternSignal()
     semaphore = asyncio.Semaphore(6)
@@ -750,12 +802,18 @@ async def scan_pre_surge_stocks(market: str = "KR", limit: int = 200) -> List[Di
                 if ohlcv.empty or len(ohlcv) < 60:
                     return None
 
+                # 감시 종목은 OHLCV 최신 데이터로 가격/등락률 계산
+                if code not in volume_rank_set and len(ohlcv) >= 2:
+                    price_map[code] = int(ohlcv["Close"].iloc[-1])
+                    prev = ohlcv["Close"].iloc[-2]
+                    curr = ohlcv["Close"].iloc[-1]
+                    change_map[code] = round((curr - prev) / prev * 100, 2) if prev > 0 else 0.0
+
                 result = scanner.check_signal(ohlcv)
                 pre = result.get("pre_surge")
                 if not pre:
                     return None
 
-                # 감지된 패턴만 추출
                 patterns = []
                 best_score = 0
                 if pre.get("dryup_recovery", {}).get("detected"):
@@ -782,16 +840,120 @@ async def scan_pre_surge_stocks(market: str = "KR", limit: int = 200) -> List[Di
                     "score": best_score,
                     "patterns": patterns,
                     "overall_score": result.get("score", 0),
+                    "from_watchlist": code not in volume_rank_set,
                     "timestamp": datetime.now().isoformat(),
                 }
             except Exception as e:
                 logger.error(f"[PreSurge] {code} 오류: {e}")
                 return None
 
-    tasks = [_check(code) for code in codes]
+    tasks = [_check(code) for code in all_codes]
     results = [r for r in await asyncio.gather(*tasks) if r is not None]
     results.sort(key=lambda x: x["score"], reverse=True)
-    logger.info(f"[PreSurge] {len(results)}/{len(codes)} pre-surge candidates")
+    logger.info(f"[PreSurge] {len(results)}/{len(all_codes)} pre-surge candidates")
+    return results
+
+
+async def scan_dart_disclosure_stocks() -> List[Dict]:
+    """
+    DART 공시 기반 매매 후보 스캔 (001740 케이스 대응)
+
+    최근 N일 내 주요 공시(실적발표/대규모계약/자사주취득 등)가 발생한 종목을
+    기술적 신호와 함께 반환.
+
+    DART_API_KEY 환경변수가 없으면 빈 리스트 반환.
+
+    Returns:
+        List of {code, name, dart_type, report_nm, rcept_dt, dart_url,
+                 price, change_rate, patterns, score, timestamp}
+    """
+    import os
+    from ..collector.dart_client import fetch_today_disclosures
+
+    if not os.getenv("DART_API_KEY"):
+        logger.debug("[DartScan] DART_API_KEY 미설정 — 공시 스캔 생략")
+        return []
+
+    from .signals import PricePatternSignal
+
+    # fetch_today_disclosures는 내부적으로 전일~당일 범위 조회
+    try:
+        unique_items = await fetch_today_disclosures()
+    except Exception as e:
+        logger.warning(f"[DartScan] 공시 조회 실패: {e}")
+        return []
+
+    if not unique_items:
+        return []
+
+    logger.info(f"[DartScan] 공시 {len(unique_items)}건 수집")
+
+    # 종목별 기술적 패턴 검사
+    scanner = PricePatternSignal()
+    semaphore = asyncio.Semaphore(4)
+
+    async def _check_disclosure(item: dict) -> Optional[Dict]:
+        code = item.get("stock_code", "")
+        if not code:
+            return None
+        async with semaphore:
+            try:
+                ohlcv = await collect_ohlcv_data(code, "KR", days=90)
+                if ohlcv.empty or len(ohlcv) < 20:
+                    price = 0
+                    change_rate = 0.0
+                    patterns = []
+                    score = 40  # 공시 자체에 기본 점수
+                else:
+                    price = int(ohlcv["Close"].iloc[-1])
+                    prev = ohlcv["Close"].iloc[-2] if len(ohlcv) >= 2 else price
+                    change_rate = round((price - prev) / prev * 100, 2) if prev > 0 else 0.0
+
+                    result = scanner.check_signal(ohlcv)
+                    pre = result.get("pre_surge") or {}
+                    patterns = []
+                    best_pattern_score = 0
+                    for ptype, label in [
+                        ("dryup_recovery", "건조회복"),
+                        ("seoryuk", "세력매집"),
+                        ("tight_consol", "압축횡보"),
+                    ]:
+                        if pre.get(ptype, {}).get("detected"):
+                            s = pre[ptype].get("score", 0)
+                            patterns.append({"type": ptype, "label": label, "score": s})
+                            best_pattern_score = max(best_pattern_score, s)
+
+                    # 공시 유형별 가중치
+                    dart_boost = {
+                        "실적발표": 20, "대규모계약": 15, "합병·인수": 15,
+                        "자사주취득": 10, "CB발행": 5, "BW발행": 5,
+                        "유상증자": -10, "투자결정": 5,
+                    }
+                    boost = dart_boost.get(item.get("dart_type", ""), 0)
+                    score = min(100, 40 + best_pattern_score // 2 + boost)
+
+                return {
+                    "code": code,
+                    "name": item.get("corp_name", code),
+                    "price": price,
+                    "change_rate": change_rate,
+                    "score": score,
+                    "patterns": patterns,
+                    "dart_type": item.get("dart_type", ""),
+                    "report_nm": item.get("report_nm", ""),
+                    "rcept_dt": item.get("rcept_dt", ""),
+                    "dart_url": item.get("dart_url", ""),
+                    "source": "dart",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            except Exception as e:
+                logger.error(f"[DartScan] {code} 오류: {e}")
+                return None
+
+    tasks = [_check_disclosure(item) for item in unique_items]
+    results = [r for r in await asyncio.gather(*tasks) if r is not None]
+    results.sort(key=lambda x: x["score"], reverse=True)
+    logger.info(f"[DartScan] {len(results)}개 공시 후보 반환")
     return results
 
 

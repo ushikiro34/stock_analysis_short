@@ -57,13 +57,14 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 function RoiBadge({ roi }: { roi: number }) {
-    const pct = (roi * 100).toFixed(2);
-    if (roi > 0.001) return (
+    // paper_engine.get_status() 는 roi를 이미 % 단위로 반환 (e.g. 5.23 = 5.23%)
+    const pct = roi.toFixed(2);
+    if (roi > 0.1) return (
         <span className="flex items-center gap-0.5 text-green-400 font-bold">
-            <ArrowUpRight size={14} />{pct}%
+            <ArrowUpRight size={14} />+{pct}%
         </span>
     );
-    if (roi < -0.001) return (
+    if (roi < -0.1) return (
         <span className="flex items-center gap-0.5 text-red-400 font-bold">
             <ArrowDownRight size={14} />{pct}%
         </span>
@@ -120,11 +121,16 @@ export default function IndexDashboard({ onNavigate }: Props) {
     const load = async () => {
         setLoading(true);
         await Promise.allSettled([
+            // /paper/status → 객체 직접 반환
             fetchJson<PaperStatus>('/paper/status').then(setPaper).catch(() => {}),
-            fetchJson<{ items: BriefingRow[] }>('/briefing/history').then(d => setBriefing(d.items?.[0] ?? null)).catch(() => {}),
-            fetchJson<{ items: ClosingRow[] }>('/briefing/closing/history').then(d => setClosing(d.items?.[0] ?? null)).catch(() => {}),
-            fetchJson<{ items: DartItem[] }>('/stocks/dart-disclosures').then(d => setDartItems(d.items ?? [])).catch(() => {}),
-            fetchJson<{ stocks: SurgeStock[] }>('/stocks/surge?market=KR').then(d => setSurgeStocks((d.stocks ?? []).slice(0, 5))).catch(() => {}),
+            // /briefing/history → 배열 직접 반환 (NOT { items: [...] })
+            fetchJson<BriefingRow[]>('/briefing/history').then(d => setBriefing(Array.isArray(d) ? (d[0] ?? null) : null)).catch(() => {}),
+            // /briefing/closing/history → 배열 직접 반환
+            fetchJson<ClosingRow[]>('/briefing/closing/history').then(d => setClosing(Array.isArray(d) ? (d[0] ?? null) : null)).catch(() => {}),
+            // /stocks/dart-disclosures → 배열 직접 반환 (NOT { items: [...] })
+            fetchJson<DartItem[]>('/stocks/dart-disclosures').then(d => setDartItems(Array.isArray(d) ? d : [])).catch(() => {}),
+            // /stocks/surge → 배열 직접 반환 (NOT { stocks: [...] })
+            fetchJson<SurgeStock[]>('/stocks/surge?market=KR').then(d => setSurgeStocks(Array.isArray(d) ? d.slice(0, 5) : [])).catch(() => {}),
         ]);
         setLastUpdated(new Date());
         setLoading(false);

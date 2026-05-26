@@ -30,6 +30,7 @@ from .routers import (
     briefing_router,
     insights_router,
     watchlist_router,
+    auth_router,
 )
 
 # Install in-memory log buffer (captures all log output for /monitor/logs)
@@ -71,6 +72,7 @@ app.include_router(live_router)
 app.include_router(briefing_router)
 app.include_router(insights_router)
 app.include_router(watchlist_router)
+app.include_router(auth_router)
 
 # ── Health check (Railway 헬스체크) ──────────────────────────
 @app.get("/health")

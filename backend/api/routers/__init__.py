@@ -10,6 +10,7 @@ from .live_trading import router as live_router
 from .briefing import router as briefing_router
 from .insights import router as insights_router
 from .watchlist import router as watchlist_router
+from .auth import router as auth_router
 
 __all__ = [
     "stocks_router",
@@ -23,4 +24,5 @@ __all__ = [
     "briefing_router",
     "insights_router",
     "watchlist_router",
+    "auth_router",
 ]

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2, BookOpen, Star, Flame, Sunrise } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Settings, Search, Bell, X, PlayCircle, Terminal, RefreshCw, Trash2, BookOpen, Star, Flame, Sunrise, Sunset, LayoutDashboard, LogOut } from 'lucide-react';
 import type { Market, LogEntry, MonitorStatus } from './lib/api';
 import { scanSignals, monitor } from './lib/api';
 
@@ -13,8 +13,11 @@ import InvestmentJournalDashboard from './pages/InvestmentJournalDashboard';
 import WatchlistDashboard from './pages/WatchlistDashboard';
 import LiveTradingDashboard from './pages/LiveTradingDashboard';
 import MorningBriefingDashboard from './pages/MorningBriefingDashboard';
+import ClosingBriefingDashboard from './pages/ClosingBriefingDashboard';
+import IndexDashboard from './pages/IndexDashboard';
+import LoginPage, { checkTokenValid, clearStoredToken } from './pages/LoginPage';
 
-type Tab = 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper' | 'journal' | 'watchlist' | 'live' | 'briefing';
+type Tab = 'index' | 'stocks' | 'signals' | 'backtest' | 'optimize' | 'paper' | 'journal' | 'watchlist' | 'live' | 'briefing' | 'closing';
 
 export type PriceFilter = 'all' | 'penny' | 'range';
 
@@ -46,7 +49,34 @@ export interface OptimizedParams {
 }
 
 function App() {
-    const [activeTab, setActiveTab] = useState<Tab>('stocks');
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+
+    useEffect(() => {
+        checkTokenValid().then(valid => setIsAuthenticated(valid));
+    }, []);
+
+    const handleLogout = () => {
+        clearStoredToken();
+        setIsAuthenticated(false);
+    };
+
+    if (isAuthenticated === null) {
+        return (
+            <div className="h-screen flex items-center justify-center bg-background">
+                <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+        );
+    }
+
+    if (!isAuthenticated) {
+        return <LoginPage onLogin={() => setIsAuthenticated(true)} />;
+    }
+
+    return <AppShell onLogout={handleLogout} />;
+}
+
+function AppShell({ onLogout }: { onLogout: () => void }) {
+    const [activeTab, setActiveTab] = useState<Tab>('index');
     const [market, setMarket] = useState<Market>('KR');
 
     // Optimized params shared between Optimize → Backtest tabs
@@ -262,6 +292,7 @@ function App() {
     };
 
     const tabs = [
+        { id: 'index' as Tab, label: '홈', icon: LayoutDashboard, color: 'text-slate-300' },
         { id: 'stocks' as Tab, label: '주식 분석', icon: Activity, color: 'text-blue-400' },
         { id: 'signals' as Tab, label: '매매 신호', icon: TrendingUp, color: 'text-green-400' },
         { id: 'backtest' as Tab, label: '백테스팅', icon: BarChart3, color: 'text-purple-400' },
@@ -271,6 +302,7 @@ function App() {
         { id: 'watchlist' as Tab, label: '관심종목', icon: Star, color: 'text-yellow-400' },
         { id: 'live' as Tab, label: '실전매매', icon: Flame, color: 'text-red-400' },
         { id: 'briefing' as Tab, label: '장전브리핑', icon: Sunrise, color: 'text-amber-400' },
+        { id: 'closing' as Tab, label: '장마감분석', icon: Sunset, color: 'text-orange-400' },
     ];
 
     return (
@@ -486,6 +518,13 @@ function App() {
                                 🇺🇸 미국
                             </button>
                         </div>
+                        <button
+                            onClick={onLogout}
+                            title="로그아웃"
+                            className="p-1.5 rounded hover:bg-slate-700 text-slate-500 hover:text-red-400 transition-colors"
+                        >
+                            <LogOut size={18} />
+                        </button>
                     </div>
                 </div>
 
@@ -580,6 +619,9 @@ function App() {
 
             {/* Main Content Area */}
             <main className="flex-1 overflow-hidden p-2 md:p-6">
+                <div className={`h-full ${activeTab === 'index' ? '' : 'hidden'}`}>
+                    <IndexDashboard onNavigate={(tab) => setActiveTab(tab)} />
+                </div>
                 <div className={`h-full ${activeTab === 'stocks' ? '' : 'hidden'}`}>
                     <StocksDashboard
                         market={market}
@@ -630,6 +672,15 @@ function App() {
                 <div className={`h-full ${activeTab === 'briefing' ? '' : 'hidden'}`}>
                     <MorningBriefingDashboard
                         isVisible={activeTab === 'briefing'}
+                        onNavigateToStock={(code: string) => {
+                            setFocusStockCode(code);
+                            setActiveTab('stocks');
+                        }}
+                    />
+                </div>
+                <div className={`h-full ${activeTab === 'closing' ? '' : 'hidden'}`}>
+                    <ClosingBriefingDashboard
+                        isVisible={activeTab === 'closing'}
                         onNavigateToStock={(code: string) => {
                             setFocusStockCode(code);
                             setActiveTab('stocks');

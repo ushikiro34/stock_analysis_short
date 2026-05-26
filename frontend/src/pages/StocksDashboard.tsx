@@ -34,6 +34,17 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
     const [cupHandleLoading, setCupHandleLoading] = useState(false);
     const [stockAnalysis, setStockAnalysis] = useState<StockAnalysis | null>(null);
 
+    // 화면 크기 감지 (모바일 vs 데스크탑 레이아웃 분기)
+    const [isMobile, setIsMobile] = useState(() =>
+        typeof window !== 'undefined' && window.innerWidth < 768
+    );
+
+    useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', handler);
+        return () => window.removeEventListener('resize', handler);
+    }, []);
+
     // Surge stocks state
     const [surgeStocks, setSurgeStocks] = useState<SurgeStock[]>([]);
     const [surgeLoading, setSurgeLoading] = useState(true);
@@ -367,812 +378,862 @@ export default function StocksDashboard({ market, filter, focusCode, onFocusDone
         };
     }, [candles]);
 
-    return (
-        <div className="h-full grid gap-2 md:gap-4
-            grid-cols-2 grid-rows-[280px_1fr]
-            md:grid-rows-1 md:grid-cols-[280px_1fr_320px]">
-            {/* LEFT PANEL: Tab (급등주 / 눌림목) — mobile col1 row1, desktop col1 */}
-            <aside className="min-w-0 flex flex-col overflow-hidden col-start-1 row-start-1">
-                {/* Tab Switcher */}
-                <div className="flex mb-3 bg-slate-800/60 rounded-lg p-0.5 shrink-0">
-                    <button
-                        onClick={() => setLeftTab('surge')}
-                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${leftTab === 'surge' ? 'bg-primary text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                    >
-                        급등주
-                    </button>
-                    <button
-                        onClick={() => setLeftTab('presurge')}
-                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${leftTab === 'presurge' ? 'bg-amber-500 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                    >
-                        ⚡급등전
-                    </button>
-                    <button
-                        onClick={() => setLeftTab('pullback')}
-                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${leftTab === 'pullback' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                    >
-                        눌림목
-                    </button>
+    // ──────────────────────────────────────────────────────────────────────
+    // JSX 변수: 각 섹션을 미리 정의해서 모바일/데스크탑 레이아웃에서 재사용
+    // ──────────────────────────────────────────────────────────────────────
+
+    // 1) 왼쪽 패널 (탭 + 종목 리스트)
+    const listPanelContent = (
+        <>
+            {/* Tab Switcher */}
+            <div className="flex mb-3 bg-slate-800/60 rounded-lg p-0.5 shrink-0">
+                <button
+                    onClick={() => setLeftTab('surge')}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${leftTab === 'surge' ? 'bg-primary text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                    급등주
+                </button>
+                <button
+                    onClick={() => setLeftTab('presurge')}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${leftTab === 'presurge' ? 'bg-amber-500 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                    ⚡급등전
+                </button>
+                <button
+                    onClick={() => setLeftTab('pullback')}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${leftTab === 'pullback' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                    눌림목
+                </button>
+            </div>
+
+            {/* 급등주 탭 */}
+            {leftTab === 'surge' && (
+                <div className="flex-1 overflow-y-auto">
+                    <SurgeList
+                        stocks={filteredStocks}
+                        selectedCode={stockCode}
+                        onSelect={handleSelectStock}
+                        onManualSelect={handleManualSelect}
+                        loading={surgeLoading}
+                        market={market}
+                        scoreMap={scoreMap}
+                        chMap={chMap}
+                    />
+                    {!surgeLoading && filteredStocks.length === 0 && surgeStocks.length > 0 && (
+                        <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-sm text-yellow-300">
+                            필터 조건에 맞는 종목이 없습니다
+                        </div>
+                    )}
                 </div>
+            )}
 
-                {/* 급등주 탭 */}
-                {leftTab === 'surge' && (
-                    <div className="flex-1 overflow-y-auto">
-                        <SurgeList
-                            stocks={filteredStocks}
-                            selectedCode={stockCode}
-                            onSelect={handleSelectStock}
-                            onManualSelect={handleManualSelect}
-                            loading={surgeLoading}
-                            market={market}
-                            scoreMap={scoreMap}
-                            chMap={chMap}
-                        />
-                        {!surgeLoading && filteredStocks.length === 0 && surgeStocks.length > 0 && (
-                            <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-sm text-yellow-300">
-                                필터 조건에 맞는 종목이 없습니다
-                            </div>
-                        )}
+            {/* 급등 전 탭 */}
+            {leftTab === 'presurge' && (
+                <div className="flex-1 overflow-y-auto">
+                    <div className="flex items-center justify-between mb-3 px-1">
+                        <span className="text-xs text-slate-400">거래량 상위 80종목 스캔</span>
+                        <button
+                            onClick={runPreSurgeScan}
+                            disabled={preSurgeLoading}
+                            className="text-xs px-2 py-1 rounded bg-amber-600/30 text-amber-300 hover:bg-amber-600/50 disabled:opacity-40 transition-all"
+                        >
+                            {preSurgeLoading ? '스캔 중…' : '재스캔'}
+                        </button>
                     </div>
-                )}
 
-                {/* 급등 전 탭 */}
-                {leftTab === 'presurge' && (
-                    <div className="flex-1 overflow-y-auto">
-                        <div className="flex items-center justify-between mb-3 px-1">
-                            <span className="text-xs text-slate-400">거래량 상위 80종목 스캔</span>
-                            <button
-                                onClick={runPreSurgeScan}
-                                disabled={preSurgeLoading}
-                                className="text-xs px-2 py-1 rounded bg-amber-600/30 text-amber-300 hover:bg-amber-600/50 disabled:opacity-40 transition-all"
-                            >
-                                {preSurgeLoading ? '스캔 중…' : '재스캔'}
-                            </button>
+                    {preSurgeLoading && (
+                        <div className="flex justify-center py-10">
+                            <Loader2 className="animate-spin text-amber-400" size={20} />
                         </div>
+                    )}
 
-                        {preSurgeLoading && (
-                            <div className="flex justify-center py-10">
-                                <Loader2 className="animate-spin text-amber-400" size={20} />
-                            </div>
-                        )}
-
-                        {!preSurgeLoading && preSurgeCandidates.length === 0 && (
-                            <div className="text-center py-10 text-slate-500 text-xs px-2">
-                                급등 전 시그널 종목 없음<br />재스캔을 눌러 탐색하세요
-                            </div>
-                        )}
-
-                        <div className="space-y-2">
-                            {preSurgeCandidates.map(c => (
-                                <button
-                                    key={c.code}
-                                    onClick={() => handleSelectStock(c.code)}
-                                    className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${
-                                        stockCode === c.code
-                                            ? 'border-amber-500 bg-amber-500/10'
-                                            : 'border-slate-700/50 bg-slate-800/40 hover:border-amber-500/40 hover:bg-amber-500/5'
-                                    }`}
-                                >
-                                    <div className="flex items-center justify-between mb-1">
-                                        <span className="text-sm font-semibold text-slate-100">{c.name}</span>
-                                        <span className="text-xs font-bold text-amber-400">점수 {c.score}</span>
-                                    </div>
-                                    <div className="flex items-center justify-between mb-1.5">
-                                        <span className="text-xs text-slate-400">{c.code}</span>
-                                        <span className={`text-xs font-medium ${c.change_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                                            {c.change_rate >= 0 ? '+' : ''}{c.change_rate.toFixed(2)}%
-                                        </span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                        {c.patterns.map(p => (
-                                            <span key={p.type} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                                                p.type === 'seoryuk' ? 'bg-purple-500/20 text-purple-300' :
-                                                p.type === 'dryup_recovery' ? 'bg-amber-500/20 text-amber-300' :
-                                                'bg-teal-500/20 text-teal-300'
-                                            }`}>
-                                                {p.label} {p.score}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </button>
-                            ))}
+                    {!preSurgeLoading && preSurgeCandidates.length === 0 && (
+                        <div className="text-center py-10 text-slate-500 text-xs px-2">
+                            급등 전 시그널 종목 없음<br />재스캔을 눌러 탐색하세요
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {/* 눌림목 탭 (Track B) */}
-                {leftTab === 'pullback' && (
-                    <div className="flex-1 overflow-y-auto">
-                        <div className="flex items-center justify-between mb-3 px-1">
-                            <span className="text-xs text-slate-400">관심종목 {watchlist.length}개 스캔</span>
-                            <button
-                                onClick={runPullbackScan}
-                                disabled={pullbackLoading || watchlist.length === 0}
-                                className="text-xs px-2 py-1 rounded bg-indigo-600/30 text-indigo-300 hover:bg-indigo-600/50 disabled:opacity-40 transition-all"
-                            >
-                                {pullbackLoading ? '스캔 중…' : '재스캔'}
-                            </button>
-                        </div>
-
-                        {watchlist.length === 0 && (
-                            <div className="text-center py-10 text-slate-500 text-xs px-2">
-                                관심종목을 추가하면<br />눌림목 후보를 자동 탐색합니다
-                            </div>
-                        )}
-
-                        {pullbackLoading && (
-                            <div className="flex items-center justify-center py-10">
-                                <Loader2 className="animate-spin text-indigo-400" size={22} />
-                            </div>
-                        )}
-
-                        {!pullbackLoading && pullbackCandidates.length === 0 && watchlist.length > 0 && (
-                            <div className="text-center py-10 text-slate-500 text-xs">
-                                눌림목 후보 없음<br />(score ≥ 55 기준)
-                            </div>
-                        )}
-
-                        {!pullbackLoading && pullbackCandidates.map(c => (
+                    <div className="space-y-2">
+                        {preSurgeCandidates.map(c => (
                             <button
                                 key={c.code}
                                 onClick={() => handleSelectStock(c.code)}
-                                className={`w-full text-left px-3 py-2.5 rounded-lg mb-1 transition-all border ${stockCode === c.code ? 'bg-indigo-600/20 border-indigo-500/40' : 'hover:bg-slate-800/60 border-transparent'}`}
+                                className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${
+                                    stockCode === c.code
+                                        ? 'border-amber-500 bg-amber-500/10'
+                                        : 'border-slate-700/50 bg-slate-800/40 hover:border-amber-500/40 hover:bg-amber-500/5'
+                                }`}
                             >
-                                <div className="flex items-center justify-between">
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                            <span className="font-medium text-slate-200 text-sm truncate">
-                                                {watchlist.find(w => w.code === c.code)?.name ?? c.code}
-                                            </span>
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-bold shrink-0">
-                                                눌림목
-                                            </span>
-                                        </div>
-                                        <div className="text-xs text-slate-500 mt-0.5">{c.code} · {c.adjustment_days}일 조정</div>
-                                        {c.fib_levels['382'] && (
-                                            <div className="text-[10px] text-indigo-400 mt-0.5 font-mono">
-                                                Fib 38.2%: {Number(c.fib_levels['382']).toLocaleString()}
-                                                {c.fib_levels['500'] ? ` / 50%: ${Number(c.fib_levels['500']).toLocaleString()}` : ''}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="text-right shrink-0 ml-2">
-                                        <div className="text-sm font-mono text-slate-200">{c.current_price.toLocaleString()}원</div>
-                                        <span className={`text-[10px] font-bold px-1 py-0.5 rounded font-mono ${c.score >= 80 ? 'bg-green-500/20 text-green-400' : c.score >= 65 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-slate-700 text-slate-400'}`}>
-                                            {c.score}
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-sm font-semibold text-slate-100">{c.name}</span>
+                                    <span className="text-xs font-bold text-amber-400">점수 {c.score}</span>
+                                </div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <span className="text-xs text-slate-400">{c.code}</span>
+                                    <span className={`text-xs font-medium ${c.change_rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                                        {c.change_rate >= 0 ? '+' : ''}{c.change_rate.toFixed(2)}%
+                                    </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                    {c.patterns.map(p => (
+                                        <span key={p.type} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                                            p.type === 'seoryuk' ? 'bg-purple-500/20 text-purple-300' :
+                                            p.type === 'dryup_recovery' ? 'bg-amber-500/20 text-amber-300' :
+                                            'bg-teal-500/20 text-teal-300'
+                                        }`}>
+                                            {p.label} {p.score}
                                         </span>
-                                    </div>
+                                    ))}
                                 </div>
                             </button>
                         ))}
                     </div>
-                )}
-            </aside>
+                </div>
+            )}
 
-            {/* CENTER PANEL: Stock Info + Chart + Info Cards — mobile col1+2 row2, desktop col2 */}
-            <main className="flex flex-col overflow-hidden min-h-0 col-span-2 row-start-2 md:col-span-1 md:col-start-2 md:row-start-1">
-                {!stockCode && !loading && (
-                    <div className="flex items-center justify-center h-full text-slate-500">
-                        <p className="text-lg">좌측에서 종목을 선택하세요</p>
+            {/* 눌림목 탭 (Track B) */}
+            {leftTab === 'pullback' && (
+                <div className="flex-1 overflow-y-auto">
+                    <div className="flex items-center justify-between mb-3 px-1">
+                        <span className="text-xs text-slate-400">관심종목 {watchlist.length}개 스캔</span>
+                        <button
+                            onClick={runPullbackScan}
+                            disabled={pullbackLoading || watchlist.length === 0}
+                            className="text-xs px-2 py-1 rounded bg-indigo-600/30 text-indigo-300 hover:bg-indigo-600/50 disabled:opacity-40 transition-all"
+                        >
+                            {pullbackLoading ? '스캔 중…' : '재스캔'}
+                        </button>
                     </div>
-                )}
 
-                {loading && (
-                    <div className="flex items-center justify-center h-full">
-                        <Loader2 className="animate-spin text-primary mr-3" size={28} />
-                        <span className="text-slate-400">로딩 중...</span>
-                    </div>
-                )}
+                    {watchlist.length === 0 && (
+                        <div className="text-center py-10 text-slate-500 text-xs px-2">
+                            관심종목을 추가하면<br />눌림목 후보를 자동 탐색합니다
+                        </div>
+                    )}
 
-                {error && !loading && (
-                    <div className="flex items-center justify-center h-full text-red-400">
-                        <p>{error}</p>
-                    </div>
-                )}
+                    {pullbackLoading && (
+                        <div className="flex items-center justify-center py-10">
+                            <Loader2 className="animate-spin text-indigo-400" size={22} />
+                        </div>
+                    )}
 
-                {stockCode && !loading && !error && (
-                    <>
-                        {/* ── 상단: 종목 정보 헤더 ─────────────────────────── */}
-                        <div className="bg-surface rounded-xl border border-slate-700 p-2.5 md:p-4 mb-2 md:mb-3 shrink-0">
+                    {!pullbackLoading && pullbackCandidates.length === 0 && watchlist.length > 0 && (
+                        <div className="text-center py-10 text-slate-500 text-xs">
+                            눌림목 후보 없음<br />(score ≥ 55 기준)
+                        </div>
+                    )}
+
+                    {!pullbackLoading && pullbackCandidates.map(c => (
+                        <button
+                            key={c.code}
+                            onClick={() => handleSelectStock(c.code)}
+                            className={`w-full text-left px-3 py-2.5 rounded-lg mb-1 transition-all border ${stockCode === c.code ? 'bg-indigo-600/20 border-indigo-500/40' : 'hover:bg-slate-800/60 border-transparent'}`}
+                        >
                             <div className="flex items-center justify-between">
-                                <div>
-                                    <div className="flex items-center gap-1.5 md:gap-2 mb-1 flex-wrap">
-                                        <h2 className="text-lg md:text-2xl font-bold">{stockName}</h2>
-                                        <button
-                                            onClick={toggleWatchlist}
-                                            title={isWatchlisted ? '관심종목 해제' : '관심종목 추가'}
-                                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm font-medium border transition-all ${
-                                                isWatchlisted
-                                                    ? 'bg-yellow-500/20 border-yellow-500/60 text-yellow-400 hover:bg-yellow-500/30'
-                                                    : 'bg-slate-700/50 border-slate-600 text-slate-400 hover:bg-slate-700 hover:text-yellow-400 hover:border-yellow-500/40'
-                                            }`}
-                                        >
-                                            <Star size={14} className={isWatchlisted ? 'fill-yellow-400 text-yellow-400' : ''} />
-                                            {watchlistAdded ? '추가됨!' : isWatchlisted ? '관심종목' : '관심추가'}
-                                        </button>
-                                        {cupHandleLoading && (
-                                            <span className="text-xs text-slate-500 animate-pulse">☕ 분석중...</span>
-                                        )}
-                                        {!cupHandleLoading && cupHandle && (
-                                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm font-bold ${
-                                                cupHandle.breakout_status === 'fresh'   ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30' :
-                                                cupHandle.breakout_status === 'pre'     ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30' :
-                                                cupHandle.breakout_status === 'expired' ? 'bg-slate-600/60 text-slate-400' :
-                                                                                          'bg-slate-700/60 text-slate-400'
-                                            }`}>
-                                                ☕
-                                                {cupHandle.breakout_status === 'fresh'   ? 'C&H 돌파'  :
-                                                 cupHandle.breakout_status === 'pre'     ? 'C&H 임박'  :
-                                                 cupHandle.breakout_status === 'expired' ? 'C&H 소멸'  : 'C&H 형성중'}
-                                            </span>
-                                        )}
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="font-medium text-slate-200 text-sm truncate">
+                                            {watchlist.find(w => w.code === c.code)?.name ?? c.code}
+                                        </span>
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-bold shrink-0">
+                                            눌림목
+                                        </span>
                                     </div>
-                                    <p className="text-xs md:text-sm text-slate-400">{stockCode} · {market}</p>
+                                    <div className="text-xs text-slate-500 mt-0.5">{c.code} · {c.adjustment_days}일 조정</div>
+                                    {c.fib_levels['382'] && (
+                                        <div className="text-[10px] text-indigo-400 mt-0.5 font-mono">
+                                            Fib 38.2%: {Number(c.fib_levels['382']).toLocaleString()}
+                                            {c.fib_levels['500'] ? ` / 50%: ${Number(c.fib_levels['500']).toLocaleString()}` : ''}
+                                        </div>
+                                    )}
                                 </div>
-                                {surgeInfo && (
-                                    <div className="text-right">
-                                        <div className="text-xl md:text-3xl font-mono font-bold mb-0.5 md:mb-1">
-                                            {market === 'US' ? '$' : ''}{surgeInfo.price.toLocaleString()}{market === 'KR' ? '원' : ''}
-                                        </div>
-                                        <div className={`flex items-center justify-end gap-1 text-xs md:text-sm font-mono ${surgeInfo.change_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                                            {surgeInfo.change_rate > 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
-                                            <span className="hidden md:inline">
-                                                {surgeInfo.change_rate > 0 ? '+' : ''}{market === 'US' ? '$' : ''}
-                                                {surgeInfo.change_price.toLocaleString()}{market === 'KR' ? '원' : ''}
-                                            </span>
-                                            <span>({surgeInfo.change_rate > 0 ? '+' : ''}{surgeInfo.change_rate.toFixed(2)}%)</span>
-                                        </div>
-                                    </div>
-                                )}
+                                <div className="text-right shrink-0 ml-2">
+                                    <div className="text-sm font-mono text-slate-200">{c.current_price.toLocaleString()}원</div>
+                                    <span className={`text-[10px] font-bold px-1 py-0.5 rounded font-mono ${c.score >= 80 ? 'bg-green-500/20 text-green-400' : c.score >= 65 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-slate-700 text-slate-400'}`}>
+                                        {c.score}
+                                    </span>
+                                </div>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            )}
+        </>
+    );
+
+    // 2) 종목 정보 헤더 카드
+    const stockHeaderContent = stockCode && !loading && !error ? (
+        <div className="bg-surface rounded-xl border border-slate-700 p-2.5 md:p-4 mb-2 md:mb-3 shrink-0">
+            <div className="flex items-center justify-between">
+                <div>
+                    <div className="flex items-center gap-1.5 md:gap-2 mb-1 flex-wrap">
+                        <h2 className="text-lg md:text-2xl font-bold">{stockName}</h2>
+                        <button
+                            onClick={toggleWatchlist}
+                            title={isWatchlisted ? '관심종목 해제' : '관심종목 추가'}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm font-medium border transition-all ${
+                                isWatchlisted
+                                    ? 'bg-yellow-500/20 border-yellow-500/60 text-yellow-400 hover:bg-yellow-500/30'
+                                    : 'bg-slate-700/50 border-slate-600 text-slate-400 hover:bg-slate-700 hover:text-yellow-400 hover:border-yellow-500/40'
+                            }`}
+                        >
+                            <Star size={14} className={isWatchlisted ? 'fill-yellow-400 text-yellow-400' : ''} />
+                            {watchlistAdded ? '추가됨!' : isWatchlisted ? '관심종목' : '관심추가'}
+                        </button>
+                        {cupHandleLoading && (
+                            <span className="text-xs text-slate-500 animate-pulse">☕ 분석중...</span>
+                        )}
+                        {!cupHandleLoading && cupHandle && (
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm font-bold ${
+                                cupHandle.breakout_status === 'fresh'   ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30' :
+                                cupHandle.breakout_status === 'pre'     ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30' :
+                                cupHandle.breakout_status === 'expired' ? 'bg-slate-600/60 text-slate-400' :
+                                                                          'bg-slate-700/60 text-slate-400'
+                            }`}>
+                                ☕
+                                {cupHandle.breakout_status === 'fresh'   ? 'C&H 돌파'  :
+                                 cupHandle.breakout_status === 'pre'     ? 'C&H 임박'  :
+                                 cupHandle.breakout_status === 'expired' ? 'C&H 소멸'  : 'C&H 형성중'}
+                            </span>
+                        )}
+                    </div>
+                    <p className="text-xs md:text-sm text-slate-400">{stockCode} · {market}</p>
+                </div>
+                {surgeInfo && (
+                    <div className="text-right">
+                        <div className="text-xl md:text-3xl font-mono font-bold mb-0.5 md:mb-1">
+                            {market === 'US' ? '$' : ''}{surgeInfo.price.toLocaleString()}{market === 'KR' ? '원' : ''}
+                        </div>
+                        <div className={`flex items-center justify-end gap-1 text-xs md:text-sm font-mono ${surgeInfo.change_rate > 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                            {surgeInfo.change_rate > 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+                            <span className="hidden md:inline">
+                                {surgeInfo.change_rate > 0 ? '+' : ''}{market === 'US' ? '$' : ''}
+                                {surgeInfo.change_price.toLocaleString()}{market === 'KR' ? '원' : ''}
+                            </span>
+                            <span>({surgeInfo.change_rate > 0 ? '+' : ''}{surgeInfo.change_rate.toFixed(2)}%)</span>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    ) : null;
+
+    // 3) 차트 패널 (일봉/주봉 토글 + 캔들 차트)
+    const chartContent = stockCode && !loading && !error ? (
+        <>
+            <div className="flex gap-2 mb-2 shrink-0">
+                {(['daily','weekly'] as ChartMode[]).map(m => (
+                    <button key={m} onClick={() => setChartMode(m)}
+                        className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                            chartMode === m ? 'bg-primary text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}>
+                        {m === 'daily' ? '일봉' : '주봉'}
+                    </button>
+                ))}
+            </div>
+            <div className="h-[260px] shrink-0">
+                {candles.length > 0 ? (
+                    <CandleChart key={`${stockCode}-${chartMode}`} data={candles} />
+                ) : (
+                    <div className="bg-surface rounded-xl border border-slate-700 h-full flex items-center justify-center text-slate-500">
+                        차트 데이터 없음
+                    </div>
+                )}
+            </div>
+        </>
+    ) : null;
+
+    // 4) 중앙 카드 6개 (현재패턴, 구간 고/저, 고점/저점 대비, ATR 손절, 거래량, 종합의견)
+    const centerCardsContent = stockCode && !loading && !error ? (
+        <>
+            {/* 카드 1: 현재 패턴 */}
+            <div className="bg-surface rounded-xl border border-slate-700 p-3">
+                <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">🔍 현재 패턴</h4>
+                <div className="space-y-1.5 text-xs">
+                    {technical?.rsi != null && (
+                        <div className="flex justify-between items-center">
+                            <span className="text-slate-400">RSI(14)</span>
+                            <span className={`font-mono font-bold ${
+                                technical.rsi > 70 ? 'text-red-400' :
+                                technical.rsi < 30 ? 'text-blue-400' : 'text-green-400'
+                            }`}>
+                                {technical.rsi.toFixed(1)}
+                                <span className="text-slate-500 font-normal ml-1">
+                                    {technical.rsi > 70 ? '과매수' : technical.rsi < 30 ? '과매도' : '중립'}
+                                </span>
+                            </span>
+                        </div>
+                    )}
+                    {technical?.ma20 != null && technical?.ma60 != null && chartStats && (
+                        <div className="flex justify-between items-center">
+                            <span className="text-slate-400">MA 배열</span>
+                            <span className={`font-bold text-[10px] px-1.5 py-0.5 rounded ${
+                                chartStats.cur > technical.ma20 && technical.ma20 > technical.ma60
+                                    ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'
+                            }`}>
+                                {chartStats.cur > technical.ma20 && technical.ma20 > technical.ma60 ? '정배열' : '역배열/혼조'}
+                            </span>
+                        </div>
+                    )}
+                    <div className="flex justify-between items-center">
+                        <span className="text-slate-400">C&H</span>
+                        {cupHandleLoading ? (
+                            <span className="text-slate-500 text-[10px]">분석중...</span>
+                        ) : cupHandle ? (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                cupHandle.breakout_status === 'fresh'   ? 'bg-purple-600/40 text-purple-300' :
+                                cupHandle.breakout_status === 'pre'     ? 'bg-orange-600/40 text-orange-300' :
+                                cupHandle.breakout_status === 'expired' ? 'bg-slate-600/40 text-slate-400' :
+                                                                          'bg-slate-700/40 text-slate-400'
+                            }`}>
+                                {cupHandle.breakout_status === 'fresh'   ? '돌파 ✓' :
+                                 cupHandle.breakout_status === 'pre'     ? '임박'   :
+                                 cupHandle.breakout_status === 'expired' ? '소멸'   : '형성중'}
+                            </span>
+                        ) : (
+                            <span className="text-slate-600 text-[10px]">—</span>
+                        )}
+                    </div>
+                    {technical?.return_60d != null && (
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">60일 수익</span>
+                            <span className={`font-mono ${technical.return_60d > 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                                {technical.return_60d > 0 ? '+' : ''}{technical.return_60d.toFixed(1)}%
+                            </span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* 카드 2: 구간 고/저점 */}
+            <div className="bg-surface rounded-xl border border-slate-700 p-3">
+                <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">📊 구간 고/저점</h4>
+                {chartStats ? (
+                    <div className="space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">구간 고점</span>
+                            <span className="font-mono text-red-300">{chartStats.periodHigh.toLocaleString()}{market === 'KR' ? '원' : ''}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">구간 저점</span>
+                            <span className="font-mono text-blue-300">{chartStats.periodLow.toLocaleString()}{market === 'KR' ? '원' : ''}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">현재가</span>
+                            <span className="font-mono text-slate-200">{chartStats.cur.toLocaleString()}{market === 'KR' ? '원' : ''}</span>
+                        </div>
+                        <div className="pt-1 border-t border-slate-700/60 flex justify-between">
+                            <span className="text-slate-400">구간</span>
+                            <span className="text-slate-400">{chartStats.periodDays}거래일</span>
+                        </div>
+                    </div>
+                ) : <p className="text-xs text-slate-600">데이터 없음</p>}
+            </div>
+
+            {/* 카드 3: 고점대비 비율 */}
+            <div className="bg-surface rounded-xl border border-slate-700 p-3">
+                <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">📉 고점/저점 대비</h4>
+                {chartStats ? (
+                    <div className="space-y-2 text-xs">
+                        <div>
+                            <div className="flex justify-between mb-1">
+                                <span className="text-slate-400">고점 대비</span>
+                                <span className={`font-mono font-bold ${chartStats.vsHighPct >= -5 ? 'text-red-400' : chartStats.vsHighPct >= -15 ? 'text-yellow-400' : 'text-slate-400'}`}>
+                                    {chartStats.vsHighPct.toFixed(1)}%
+                                </span>
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-red-500/60 rounded-full"
+                                    style={{ width: `${Math.max(0, 100 + chartStats.vsHighPct)}%` }} />
                             </div>
                         </div>
-
-                        {/* ── 중간: 차트 (50% 축소) ───────────────────────── */}
-                        <div className="flex gap-2 mb-2 shrink-0">
-                            {(['daily','weekly'] as ChartMode[]).map(m => (
-                                <button key={m} onClick={() => setChartMode(m)}
-                                    className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                                        chartMode === m ? 'bg-primary text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                                    }`}>
-                                    {m === 'daily' ? '일봉' : '주봉'}
-                                </button>
-                            ))}
+                        <div>
+                            <div className="flex justify-between mb-1">
+                                <span className="text-slate-400">저점 대비</span>
+                                <span className={`font-mono font-bold ${chartStats.vsLowPct > 50 ? 'text-green-400' : chartStats.vsLowPct > 20 ? 'text-yellow-400' : 'text-slate-400'}`}>
+                                    +{chartStats.vsLowPct.toFixed(1)}%
+                                </span>
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-green-500/60 rounded-full"
+                                    style={{ width: `${Math.min(100, chartStats.vsLowPct / 2)}%` }} />
+                            </div>
                         </div>
+                        {technical?.ma20 != null && (
+                            <div className="flex justify-between pt-1 border-t border-slate-700/60">
+                                <span className="text-slate-400">MA20 대비</span>
+                                <span className={`font-mono ${((chartStats.cur / technical.ma20) - 1) > 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                                    {(((chartStats.cur / technical.ma20) - 1) * 100) > 0 ? '+' : ''}
+                                    {(((chartStats.cur / technical.ma20) - 1) * 100).toFixed(1)}%
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                ) : <p className="text-xs text-slate-600">데이터 없음</p>}
+            </div>
 
-                        <div className="h-[260px] shrink-0 mb-3">
-                            {candles.length > 0 ? (
-                                <CandleChart key={`${stockCode}-${chartMode}`} data={candles} />
+            {/* 카드 4: ATR 손절가 */}
+            <div className="bg-surface rounded-xl border border-amber-600/30 p-3">
+                <h4 className="text-xs font-bold text-amber-400/80 mb-2 uppercase tracking-wide">⚡ ATR 손절 기준</h4>
+                {chartStats?.atr != null ? (
+                    <div className="space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">ATR(14)</span>
+                            <span className="font-mono text-slate-300">
+                                {chartStats.atr.toFixed(0)}{market === 'KR' ? '원' : ''}
+                                <span className="text-slate-500 ml-1">({(chartStats.atr / chartStats.cur * 100).toFixed(1)}%)</span>
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">배수</span>
+                            <span className="font-mono text-slate-300">{chartStats.atrMult}×</span>
+                        </div>
+                        <div className="flex justify-between items-center pt-1 border-t border-slate-700/60">
+                            <span className="text-amber-400/80 font-medium">손절가</span>
+                            <span className="font-mono font-bold text-amber-400">
+                                {chartStats.atrStop!.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}{market === 'KR' ? '원' : ''}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">손실 비율</span>
+                            <span className="font-mono text-red-400">
+                                {(((chartStats.atrStop! - chartStats.cur) / chartStats.cur) * 100).toFixed(1)}%
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">hard floor</span>
+                            <span className="font-mono text-slate-500">
+                                {(chartStats.cur * 0.92).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}원 (-8%)
+                            </span>
+                        </div>
+                    </div>
+                ) : <p className="text-xs text-slate-600">차트 데이터 부족 (15일 필요)</p>}
+            </div>
+
+            {/* 카드 5: 거래량 */}
+            <div className="bg-surface rounded-xl border border-slate-700 p-3">
+                <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">📦 거래량</h4>
+                <div className="space-y-1.5 text-xs">
+                    {surgeInfo && (
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">거래대금</span>
+                            <span className="font-mono text-slate-300">
+                                {surgeInfo.volume >= 1_000_000
+                                    ? `${(surgeInfo.volume / 1_000_000).toFixed(1)}M`
+                                    : surgeInfo.volume >= 1_000
+                                    ? `${(surgeInfo.volume / 1_000).toFixed(0)}K`
+                                    : surgeInfo.volume.toLocaleString()}
+                            </span>
+                        </div>
+                    )}
+                    {chartStats?.vol5dAvg != null && (
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">5일 평균</span>
+                            <span className="font-mono text-slate-300">
+                                {chartStats.vol5dAvg >= 1_000_000
+                                    ? `${(chartStats.vol5dAvg / 1_000_000).toFixed(2)}M`
+                                    : `${(chartStats.vol5dAvg / 1_000).toFixed(0)}K`}
+                            </span>
+                        </div>
+                    )}
+                    {chartStats?.vol20dAvg != null && (
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">20일 평균</span>
+                            <span className="font-mono text-slate-300">
+                                {chartStats.vol20dAvg >= 1_000_000
+                                    ? `${(chartStats.vol20dAvg / 1_000_000).toFixed(2)}M`
+                                    : `${(chartStats.vol20dAvg / 1_000).toFixed(0)}K`}
+                            </span>
+                        </div>
+                    )}
+                    {chartStats?.volRatio != null ? (
+                        <div className="pt-1 border-t border-slate-700/60">
+                            <div className="flex justify-between mb-1">
+                                <span className="text-slate-400">비율 (5일/20일)</span>
+                                <span className={`font-mono font-bold ${chartStats.volRatio >= 1.5 ? 'text-red-400' : chartStats.volRatio >= 1.0 ? 'text-yellow-400' : 'text-slate-400'}`}>
+                                    {chartStats.volRatio.toFixed(2)}×
+                                </span>
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${chartStats.volRatio >= 1.5 ? 'bg-red-500/70' : chartStats.volRatio >= 1.0 ? 'bg-yellow-500/70' : 'bg-slate-500/70'}`}
+                                    style={{ width: `${Math.min(100, chartStats.volRatio * 50)}%` }} />
+                            </div>
+                        </div>
+                    ) : (
+                        technical?.volatility != null && (
+                            <div className="flex justify-between pt-1 border-t border-slate-700/60">
+                                <span className="text-slate-400">변동성(20d)</span>
+                                <span className="font-mono text-slate-300">{(technical.volatility * 100).toFixed(2)}%</span>
+                            </div>
+                        )
+                    )}
+                </div>
+            </div>
+
+            {/* 카드 6: 종합 의견 */}
+            {(() => {
+                const isBuy = stockAnalysis?.signal === 'BUY';
+                const isChaseBlocked = stockAnalysis?.chase_blocked ?? false;
+                const verdict = !stockAnalysis ? '분석 중'
+                    : isChaseBlocked ? '추격차단'
+                    : isBuy       ? '매수'
+                    :               '관망';
+                const verdictColor = verdict === '매수'       ? 'bg-green-500/20 text-green-300 border-green-500/40'
+                    : verdict === '추격차단' ? 'bg-orange-500/20 text-orange-300 border-orange-500/40'
+                    : verdict === '분석 중'  ? 'bg-slate-700/40 text-slate-400 border-slate-600'
+                    :                          'bg-yellow-500/20 text-yellow-300 border-yellow-500/40';
+                const reasons: string[] = stockAnalysis?.signal_reasons ?? [];
+                const beScore = stockAnalysis?.score ?? null;
+                const ps = stockAnalysis?.pre_surge;
+                const hasPreSurge = ps && (
+                    ps.dryup_recovery.detected ||
+                    ps.seoryuk.detected ||
+                    ps.tight_consol.detected
+                );
+
+                return (
+                    <div className="bg-surface rounded-xl border border-slate-700 p-3">
+                        <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">💡 종합 의견</h4>
+                        <div className="space-y-1.5 text-xs">
+                            <div className="flex items-center justify-between">
+                                <span className={`inline-block px-2 py-0.5 rounded border font-bold text-sm ${verdictColor}`}>
+                                    {verdict}
+                                </span>
+                                {beScore != null && (
+                                    <span className={`font-mono font-bold text-sm ${beScore >= 70 ? 'text-green-400' : beScore >= 50 ? 'text-yellow-400' : 'text-slate-500'}`}>
+                                        {beScore}점
+                                    </span>
+                                )}
+                            </div>
+                            {reasons.length > 0 ? (
+                                <div className="pt-1 space-y-1">
+                                    {reasons.map((r, i) => (
+                                        <div key={i} className={`flex items-start gap-1 ${r.includes('추격차단') || r.includes('급등') ? 'text-orange-400' : isBuy ? 'text-green-400' : 'text-slate-400'}`}>
+                                            <span className="shrink-0 mt-0.5">{r.includes('추격차단') || r.includes('급등') ? '⚠' : isBuy ? '▲' : '–'}</span>
+                                            <span>{r}</span>
+                                        </div>
+                                    ))}
+                                </div>
                             ) : (
-                                <div className="bg-surface rounded-xl border border-slate-700 h-full flex items-center justify-center text-slate-500">
-                                    차트 데이터 없음
+                                stockAnalysis && <p className="text-slate-600 text-[10px] pt-1">신호 근거 없음</p>
+                            )}
+                            {hasPreSurge && (
+                                <div className="mt-2 pt-2 border-t border-slate-700/60">
+                                    <p className="text-[10px] font-bold text-purple-400 mb-1">⚡ 급등 전 시그널</p>
+                                    {ps!.dryup_recovery.detected && (
+                                        <div className="text-purple-300 text-[10px]">
+                                            📊 거래량 건조 회복 ({ps!.dryup_recovery.dryup_days}일 건조
+                                            {ps!.dryup_recovery.extreme_dryup ? ' · 극단' : ''} → ×{ps!.dryup_recovery.vol_ratio_at_recovery})
+                                        </div>
+                                    )}
+                                    {ps!.seoryuk.detected && (
+                                        <div className="text-red-300 text-[10px]">
+                                            🔥 세력 매집 의심 (폭발 ×{ps!.seoryuk.spike_ratio} · 최저 ×{ps!.seoryuk.dryup_min_ratio})
+                                        </div>
+                                    )}
+                                    {ps!.tight_consol.detected && (
+                                        <div className="text-cyan-300 text-[10px]">
+                                            🗜️ 에너지 압축 {ps!.tight_consol.range_pct}% 횡보
+                                            {ps!.tight_consol.vol_trend === 'shrinking' ? ' · 거래량 수축' : ''}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
+                    </div>
+                );
+            })()}
+        </>
+    ) : null;
 
-                        {/* ── 하단: 정보 카드 그리드 (2열) ────────────────── */}
+    // 5) 오른쪽 패널 카드들 (종합점수, 리스크경고, C&H, 펀더멘털, 기술적지표)
+    const rightCardsContent = stockCode && !loading && !error ? (
+        <>
+            {/* 종합 점수 카드 */}
+            <div className="bg-surface rounded-xl border border-slate-700 p-2.5 md:p-4">
+                <h3 className="text-xs md:text-sm font-bold text-slate-300 mb-2 md:mb-3">종합 점수</h3>
+                <div className="text-center mb-2 md:mb-4">
+                    <div className="text-2xl md:text-4xl font-bold text-primary mb-0.5 md:mb-1">
+                        {scoreProps.total.toFixed(0)}
+                    </div>
+                    <div className="text-xs text-slate-400">/ 100점</div>
+                </div>
+                <div className="space-y-1.5 md:space-y-2 text-xs md:text-sm">
+                    <div className="flex justify-between items-center">
+                        <span className="text-slate-400">가치</span>
+                        <div className="flex items-center gap-1 md:gap-2">
+                            <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-green-500" style={{ width: `${(scoreProps.value / 40) * 100}%` }} />
+                            </div>
+                            <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
+                                {scoreProps.value.toFixed(0)}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                        <span className="text-slate-400">추세</span>
+                        <div className="flex items-center gap-1 md:gap-2">
+                            <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-blue-500" style={{ width: `${(scoreProps.trend / 30) * 100}%` }} />
+                            </div>
+                            <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
+                                {scoreProps.trend.toFixed(0)}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                        <span className="text-slate-400">안정성</span>
+                        <div className="flex items-center gap-1 md:gap-2">
+                            <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-purple-500" style={{ width: `${(scoreProps.stability / 20) * 100}%` }} />
+                            </div>
+                            <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
+                                {scoreProps.stability.toFixed(0)}
+                            </span>
+                        </div>
+                    </div>
+                    {scoreProps.risk > 0 && (
+                        <div className="flex justify-between items-center pt-1.5 border-t border-slate-700">
+                            <span className="text-red-400">리스크</span>
+                            <span className="font-mono text-red-400">-{scoreProps.risk.toFixed(0)}</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* 리스크 경고 */}
+            {warnings.length > 0 && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 md:p-4">
+                    <h3 className="text-xs md:text-sm font-bold text-red-400 mb-2">⚠️ 리스크 경고</h3>
+                    <ul className="space-y-1">
+                        {warnings.map((warning, idx) => (
+                            <li key={idx} className="text-xs text-red-300 flex items-start gap-1">
+                                <span className="text-red-400 mt-0.5">•</span>
+                                <span>{warning}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            {/* 컵앤핸들 패턴 */}
+            {(cupHandleLoading || cupHandle) && (
+                <div className={`rounded-xl border p-3 md:p-4 ${cupHandle?.breakout_status === 'fresh' ? 'bg-purple-900/20 border-purple-600/60' :
+                        cupHandle?.breakout_status === 'pre' ? 'bg-orange-900/20 border-orange-600/60' :
+                            'bg-surface border-slate-700'
+                    }`}>
+                    <h3 className="text-xs md:text-sm font-bold text-slate-300 mb-2 md:mb-3">☕ 컵앤핸들 패턴</h3>
+                    {cupHandleLoading ? (
+                        <p className="text-xs text-slate-500">분석 중...</p>
+                    ) : cupHandle ? (
+                        <>
+                            <div className="flex items-center justify-between mb-2">
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded ${cupHandle.breakout_status === 'fresh' ? 'bg-purple-600 text-white' :
+                                        cupHandle.breakout_status === 'pre' ? 'bg-orange-500 text-white' :
+                                            cupHandle.breakout_status === 'expired' ? 'bg-slate-600 text-slate-300' :
+                                                'bg-slate-700 text-slate-400'
+                                    }`}>
+                                    {cupHandle.breakout_status === 'fresh' ? '돌파 확인' :
+                                        cupHandle.breakout_status === 'pre' ? '돌파 임박' :
+                                            cupHandle.breakout_status === 'expired' ? '기회 소멸' : '형성 중'}
+                                </span>
+                                <span className="text-sm font-bold text-slate-300">{cupHandle.score}점</span>
+                            </div>
+                            <ul className="space-y-1">
+                                {cupHandle.reasons.map((r, i) => (
+                                    <li key={i} className={`text-xs flex items-start gap-1 ${cupHandle.breakout_status === 'expired' ? 'text-slate-500' : 'text-slate-300'
+                                        }`}>
+                                        <span className="mt-0.5 shrink-0">◆</span>
+                                        <span>{r}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </>
+                    ) : (
+                        <p className="text-xs text-slate-500">패턴 없음</p>
+                    )}
+                </div>
+            )}
+
+            {/* 펀더멘털 */}
+            <div className="bg-surface rounded-xl border border-slate-700 p-3 md:p-4">
+                <h3 className="text-xs md:text-sm font-bold text-slate-300 mb-2 md:mb-3">📊 펀더멘털</h3>
+                {fundamental ? (
+                    <div className="space-y-1.5 md:space-y-2 text-xs md:text-sm">
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">PER</span>
+                            <span className={`font-mono ${(fundamental.per ?? 0) < 20 ? 'text-green-400' :
+                                    (fundamental.per ?? 0) > 50 ? 'text-red-400' : 'text-slate-300'
+                                }`}>
+                                {fundamental.per != null ? fundamental.per.toFixed(1) : '-'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">PBR</span>
+                            <span className={`font-mono ${(fundamental.pbr ?? 0) < 1.5 ? 'text-green-400' : 'text-slate-300'
+                                }`}>
+                                {fundamental.pbr != null ? fundamental.pbr.toFixed(2) : '-'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">ROE</span>
+                            <span className={`font-mono ${(fundamental.roe ?? 0) > 10 ? 'text-green-400' : 'text-slate-300'
+                                }`}>
+                                {fundamental.roe != null ? `${fundamental.roe.toFixed(1)}%` : '-'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">EPS</span>
+                            <span className={`font-mono ${(fundamental.eps ?? 0) > 0 ? 'text-slate-300' : 'text-red-400'
+                                }`}>
+                                {fundamental.eps != null ? `${market === 'US' ? '$' : ''}${fundamental.eps.toLocaleString()}` : '-'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">BPS</span>
+                            <span className="font-mono text-slate-300">
+                                {fundamental.bps != null ? `${market === 'US' ? '$' : ''}${fundamental.bps.toLocaleString()}` : '-'}
+                            </span>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-slate-500 text-xs">데이터 없음</p>
+                )}
+            </div>
+
+            {/* 기술적 지표 */}
+            <div className="bg-surface rounded-xl border border-slate-700 p-3 md:p-4">
+                <h3 className="text-xs md:text-sm font-bold text-slate-300 mb-2 md:mb-3">📈 기술적 지표</h3>
+                {technical ? (
+                    <div className="space-y-1.5 md:space-y-2 text-xs md:text-sm">
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">RSI(14)</span>
+                            <span className={`font-mono ${(technical.rsi ?? 50) > 70 ? 'text-red-400' :
+                                    (technical.rsi ?? 50) < 30 ? 'text-blue-400' : 'text-slate-300'
+                                }`}>
+                                {technical.rsi != null ? technical.rsi.toFixed(1) : '-'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">MA20</span>
+                            <span className="font-mono text-slate-300">
+                                {technical.ma20?.toLocaleString() ?? '-'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">MA60</span>
+                            <span className="font-mono text-slate-300">
+                                {technical.ma60?.toLocaleString() ?? '-'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">변동성</span>
+                            <span className="font-mono text-slate-300">
+                                {technical.volatility != null ? `${(technical.volatility * 100).toFixed(2)}%` : '-'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-400">60일 수익률</span>
+                            <span className={`font-mono ${(technical.return_60d ?? 0) > 0 ? 'text-red-400' : 'text-blue-400'
+                                }`}>
+                                {technical.return_60d != null
+                                    ? `${technical.return_60d > 0 ? '+' : ''}${technical.return_60d.toFixed(1)}%`
+                                    : '-'}
+                            </span>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-slate-500 text-xs">데이터 없음</p>
+                )}
+            </div>
+        </>
+    ) : null;
+
+    // 6) 상태 표시 (로딩/에러/선택 없음)
+    const stateIndicator = (
+        <>
+            {!stockCode && !loading && (
+                <div className="flex items-center justify-center py-8 text-slate-500">
+                    <p className="text-sm">위에서 종목을 선택하세요</p>
+                </div>
+            )}
+            {loading && (
+                <div className="flex items-center justify-center py-8">
+                    <Loader2 className="animate-spin text-primary mr-2" size={24} />
+                    <span className="text-slate-400 text-sm">로딩 중...</span>
+                </div>
+            )}
+            {error && !loading && (
+                <div className="flex items-center justify-center py-8 text-red-400">
+                    <p className="text-sm">{error}</p>
+                </div>
+            )}
+        </>
+    );
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 레이아웃 분기: 모바일 vs 데스크탑
+    // ──────────────────────────────────────────────────────────────────────
+
+    if (isMobile) {
+        // 모바일: [리스트] → [종목헤더] → [카드 2단 그리드] → [차트]
+        return (
+            <div className="h-full flex flex-col gap-2 overflow-y-auto">
+                {/* 1. 리스트 (상단, 전폭) */}
+                <aside className="min-w-0 flex flex-col h-[280px] shrink-0 overflow-hidden">
+                    {listPanelContent}
+                </aside>
+
+                {/* 상태 표시 */}
+                {stateIndicator}
+
+                {/* 2. 종목 헤더 */}
+                {stockHeaderContent}
+
+                {/* 3. 카드 2단 그리드 (오른쪽 5개 + 중앙 6개) */}
+                {stockCode && !loading && !error && (
+                    <div className="grid grid-cols-2 gap-2">
+                        {rightCardsContent}
+                        {centerCardsContent}
+                    </div>
+                )}
+
+                {/* 4. 차트 (맨 아래) */}
+                {chartContent}
+            </div>
+        );
+    }
+
+    // 데스크탑: 기존 3패널 그리드 [리스트 | 헤더+차트+중앙카드 | 오른쪽카드]
+    return (
+        <div className="h-full grid gap-4 grid-cols-[280px_1fr_320px] grid-rows-1">
+            {/* LEFT: 리스트 */}
+            <aside className="min-w-0 flex flex-col overflow-hidden">
+                {listPanelContent}
+            </aside>
+
+            {/* CENTER: 종목헤더 + 차트 + 6 카드 */}
+            <main className="flex flex-col overflow-hidden min-h-0">
+                {stateIndicator}
+                {stockCode && !loading && !error && (
+                    <>
+                        {stockHeaderContent}
+                        <div className="mb-3">
+                            {chartContent}
+                        </div>
                         <div className="flex-1 overflow-y-auto min-h-0">
                             <div className="grid grid-cols-2 gap-2 pb-2">
-
-                                {/* 카드 1: 현재 패턴 */}
-                                <div className="bg-surface rounded-xl border border-slate-700 p-3">
-                                    <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">🔍 현재 패턴</h4>
-                                    <div className="space-y-1.5 text-xs">
-                                        {/* RSI 상태 */}
-                                        {technical?.rsi != null && (
-                                            <div className="flex justify-between items-center">
-                                                <span className="text-slate-400">RSI(14)</span>
-                                                <span className={`font-mono font-bold ${
-                                                    technical.rsi > 70 ? 'text-red-400' :
-                                                    technical.rsi < 30 ? 'text-blue-400' : 'text-green-400'
-                                                }`}>
-                                                    {technical.rsi.toFixed(1)}
-                                                    <span className="text-slate-500 font-normal ml-1">
-                                                        {technical.rsi > 70 ? '과매수' : technical.rsi < 30 ? '과매도' : '중립'}
-                                                    </span>
-                                                </span>
-                                            </div>
-                                        )}
-                                        {/* MA 배열 */}
-                                        {technical?.ma20 != null && technical?.ma60 != null && chartStats && (
-                                            <div className="flex justify-between items-center">
-                                                <span className="text-slate-400">MA 배열</span>
-                                                <span className={`font-bold text-[10px] px-1.5 py-0.5 rounded ${
-                                                    chartStats.cur > technical.ma20 && technical.ma20 > technical.ma60
-                                                        ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'
-                                                }`}>
-                                                    {chartStats.cur > technical.ma20 && technical.ma20 > technical.ma60 ? '정배열' : '역배열/혼조'}
-                                                </span>
-                                            </div>
-                                        )}
-                                        {/* C&H 패턴 */}
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-slate-400">C&H</span>
-                                            {cupHandleLoading ? (
-                                                <span className="text-slate-500 text-[10px]">분석중...</span>
-                                            ) : cupHandle ? (
-                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                                                    cupHandle.breakout_status === 'fresh'   ? 'bg-purple-600/40 text-purple-300' :
-                                                    cupHandle.breakout_status === 'pre'     ? 'bg-orange-600/40 text-orange-300' :
-                                                    cupHandle.breakout_status === 'expired' ? 'bg-slate-600/40 text-slate-400' :
-                                                                                              'bg-slate-700/40 text-slate-400'
-                                                }`}>
-                                                    {cupHandle.breakout_status === 'fresh'   ? '돌파 ✓' :
-                                                     cupHandle.breakout_status === 'pre'     ? '임박'   :
-                                                     cupHandle.breakout_status === 'expired' ? '소멸'   : '형성중'}
-                                                </span>
-                                            ) : (
-                                                <span className="text-slate-600 text-[10px]">—</span>
-                                            )}
-                                        </div>
-                                        {/* 60일 수익률 */}
-                                        {technical?.return_60d != null && (
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">60일 수익</span>
-                                                <span className={`font-mono ${technical.return_60d > 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                                                    {technical.return_60d > 0 ? '+' : ''}{technical.return_60d.toFixed(1)}%
-                                                </span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* 카드 2: 구간 고/저점 */}
-                                <div className="bg-surface rounded-xl border border-slate-700 p-3">
-                                    <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">📊 구간 고/저점</h4>
-                                    {chartStats ? (
-                                        <div className="space-y-1.5 text-xs">
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">구간 고점</span>
-                                                <span className="font-mono text-red-300">{chartStats.periodHigh.toLocaleString()}{market === 'KR' ? '원' : ''}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">구간 저점</span>
-                                                <span className="font-mono text-blue-300">{chartStats.periodLow.toLocaleString()}{market === 'KR' ? '원' : ''}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">현재가</span>
-                                                <span className="font-mono text-slate-200">{chartStats.cur.toLocaleString()}{market === 'KR' ? '원' : ''}</span>
-                                            </div>
-                                            <div className="pt-1 border-t border-slate-700/60 flex justify-between">
-                                                <span className="text-slate-400">구간</span>
-                                                <span className="text-slate-400">{chartStats.periodDays}거래일</span>
-                                            </div>
-                                        </div>
-                                    ) : <p className="text-xs text-slate-600">데이터 없음</p>}
-                                </div>
-
-                                {/* 카드 3: 고점대비 비율 */}
-                                <div className="bg-surface rounded-xl border border-slate-700 p-3">
-                                    <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">📉 고점/저점 대비</h4>
-                                    {chartStats ? (
-                                        <div className="space-y-2 text-xs">
-                                            <div>
-                                                <div className="flex justify-between mb-1">
-                                                    <span className="text-slate-400">고점 대비</span>
-                                                    <span className={`font-mono font-bold ${chartStats.vsHighPct >= -5 ? 'text-red-400' : chartStats.vsHighPct >= -15 ? 'text-yellow-400' : 'text-slate-400'}`}>
-                                                        {chartStats.vsHighPct.toFixed(1)}%
-                                                    </span>
-                                                </div>
-                                                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-red-500/60 rounded-full"
-                                                        style={{ width: `${Math.max(0, 100 + chartStats.vsHighPct)}%` }} />
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="flex justify-between mb-1">
-                                                    <span className="text-slate-400">저점 대비</span>
-                                                    <span className={`font-mono font-bold ${chartStats.vsLowPct > 50 ? 'text-green-400' : chartStats.vsLowPct > 20 ? 'text-yellow-400' : 'text-slate-400'}`}>
-                                                        +{chartStats.vsLowPct.toFixed(1)}%
-                                                    </span>
-                                                </div>
-                                                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-green-500/60 rounded-full"
-                                                        style={{ width: `${Math.min(100, chartStats.vsLowPct / 2)}%` }} />
-                                                </div>
-                                            </div>
-                                            {technical?.ma20 != null && (
-                                                <div className="flex justify-between pt-1 border-t border-slate-700/60">
-                                                    <span className="text-slate-400">MA20 대비</span>
-                                                    <span className={`font-mono ${((chartStats.cur / technical.ma20) - 1) > 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                                                        {(((chartStats.cur / technical.ma20) - 1) * 100) > 0 ? '+' : ''}
-                                                        {(((chartStats.cur / technical.ma20) - 1) * 100).toFixed(1)}%
-                                                    </span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ) : <p className="text-xs text-slate-600">데이터 없음</p>}
-                                </div>
-
-                                {/* 카드 4: ATR 손절가 */}
-                                <div className="bg-surface rounded-xl border border-amber-600/30 p-3">
-                                    <h4 className="text-xs font-bold text-amber-400/80 mb-2 uppercase tracking-wide">⚡ ATR 손절 기준</h4>
-                                    {chartStats?.atr != null ? (
-                                        <div className="space-y-1.5 text-xs">
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">ATR(14)</span>
-                                                <span className="font-mono text-slate-300">
-                                                    {chartStats.atr.toFixed(0)}{market === 'KR' ? '원' : ''}
-                                                    <span className="text-slate-500 ml-1">({(chartStats.atr / chartStats.cur * 100).toFixed(1)}%)</span>
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">배수</span>
-                                                <span className="font-mono text-slate-300">{chartStats.atrMult}×</span>
-                                            </div>
-                                            <div className="flex justify-between items-center pt-1 border-t border-slate-700/60">
-                                                <span className="text-amber-400/80 font-medium">손절가</span>
-                                                <span className="font-mono font-bold text-amber-400">
-                                                    {chartStats.atrStop!.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}{market === 'KR' ? '원' : ''}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">손실 비율</span>
-                                                <span className="font-mono text-red-400">
-                                                    {(((chartStats.atrStop! - chartStats.cur) / chartStats.cur) * 100).toFixed(1)}%
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">hard floor</span>
-                                                <span className="font-mono text-slate-500">
-                                                    {(chartStats.cur * 0.92).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}원 (-8%)
-                                                </span>
-                                            </div>
-                                        </div>
-                                    ) : <p className="text-xs text-slate-600">차트 데이터 부족 (15일 필요)</p>}
-                                </div>
-
-                                {/* 카드 5: 거래량 */}
-                                <div className="bg-surface rounded-xl border border-slate-700 p-3">
-                                    <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">📦 거래량</h4>
-                                    <div className="space-y-1.5 text-xs">
-                                        {surgeInfo && (
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">거래대금</span>
-                                                <span className="font-mono text-slate-300">
-                                                    {surgeInfo.volume >= 1_000_000
-                                                        ? `${(surgeInfo.volume / 1_000_000).toFixed(1)}M`
-                                                        : surgeInfo.volume >= 1_000
-                                                        ? `${(surgeInfo.volume / 1_000).toFixed(0)}K`
-                                                        : surgeInfo.volume.toLocaleString()}
-                                                </span>
-                                            </div>
-                                        )}
-                                        {chartStats?.vol5dAvg != null && (
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">5일 평균</span>
-                                                <span className="font-mono text-slate-300">
-                                                    {chartStats.vol5dAvg >= 1_000_000
-                                                        ? `${(chartStats.vol5dAvg / 1_000_000).toFixed(2)}M`
-                                                        : `${(chartStats.vol5dAvg / 1_000).toFixed(0)}K`}
-                                                </span>
-                                            </div>
-                                        )}
-                                        {chartStats?.vol20dAvg != null && (
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">20일 평균</span>
-                                                <span className="font-mono text-slate-300">
-                                                    {chartStats.vol20dAvg >= 1_000_000
-                                                        ? `${(chartStats.vol20dAvg / 1_000_000).toFixed(2)}M`
-                                                        : `${(chartStats.vol20dAvg / 1_000).toFixed(0)}K`}
-                                                </span>
-                                            </div>
-                                        )}
-                                        {chartStats?.volRatio != null ? (
-                                            <div className="pt-1 border-t border-slate-700/60">
-                                                <div className="flex justify-between mb-1">
-                                                    <span className="text-slate-400">비율 (5일/20일)</span>
-                                                    <span className={`font-mono font-bold ${chartStats.volRatio >= 1.5 ? 'text-red-400' : chartStats.volRatio >= 1.0 ? 'text-yellow-400' : 'text-slate-400'}`}>
-                                                        {chartStats.volRatio.toFixed(2)}×
-                                                    </span>
-                                                </div>
-                                                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                                    <div className={`h-full rounded-full ${chartStats.volRatio >= 1.5 ? 'bg-red-500/70' : chartStats.volRatio >= 1.0 ? 'bg-yellow-500/70' : 'bg-slate-500/70'}`}
-                                                        style={{ width: `${Math.min(100, chartStats.volRatio * 50)}%` }} />
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            technical?.volatility != null && (
-                                                <div className="flex justify-between pt-1 border-t border-slate-700/60">
-                                                    <span className="text-slate-400">변동성(20d)</span>
-                                                    <span className="font-mono text-slate-300">{(technical.volatility * 100).toFixed(2)}%</span>
-                                                </div>
-                                            )
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* 카드 6: 종합 의견 (백엔드 signal 기반) */}
-                                {(() => {
-                                    const isBuy = stockAnalysis?.signal === 'BUY';
-                                    const isChaseBlocked = stockAnalysis?.chase_blocked ?? false;
-                                    const verdict = !stockAnalysis ? '분석 중'
-                                        : isChaseBlocked ? '추격차단'
-                                        : isBuy       ? '매수'
-                                        :               '관망';
-                                    const verdictColor = verdict === '매수'       ? 'bg-green-500/20 text-green-300 border-green-500/40'
-                                        : verdict === '추격차단' ? 'bg-orange-500/20 text-orange-300 border-orange-500/40'
-                                        : verdict === '분석 중'  ? 'bg-slate-700/40 text-slate-400 border-slate-600'
-                                        :                          'bg-yellow-500/20 text-yellow-300 border-yellow-500/40';
-                                    const reasons: string[] = stockAnalysis?.signal_reasons ?? [];
-                                    const beScore = stockAnalysis?.score ?? null;
-                                    const ps = stockAnalysis?.pre_surge;
-                                    const hasPreSurge = ps && (
-                                        ps.dryup_recovery.detected ||
-                                        ps.seoryuk.detected ||
-                                        ps.tight_consol.detected
-                                    );
-
-                                    return (
-                                        <div className="bg-surface rounded-xl border border-slate-700 p-3">
-                                            <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wide">💡 종합 의견</h4>
-                                            <div className="space-y-1.5 text-xs">
-                                                <div className="flex items-center justify-between">
-                                                    <span className={`inline-block px-2 py-0.5 rounded border font-bold text-sm ${verdictColor}`}>
-                                                        {verdict}
-                                                    </span>
-                                                    {beScore != null && (
-                                                        <span className={`font-mono font-bold text-sm ${beScore >= 70 ? 'text-green-400' : beScore >= 50 ? 'text-yellow-400' : 'text-slate-500'}`}>
-                                                            {beScore}점
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                {reasons.length > 0 ? (
-                                                    <div className="pt-1 space-y-1">
-                                                        {reasons.map((r, i) => (
-                                                            <div key={i} className={`flex items-start gap-1 ${r.includes('추격차단') || r.includes('급등') ? 'text-orange-400' : isBuy ? 'text-green-400' : 'text-slate-400'}`}>
-                                                                <span className="shrink-0 mt-0.5">{r.includes('추격차단') || r.includes('급등') ? '⚠' : isBuy ? '▲' : '–'}</span>
-                                                                <span>{r}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    stockAnalysis && <p className="text-slate-600 text-[10px] pt-1">신호 근거 없음</p>
-                                                )}
-                                                {hasPreSurge && (
-                                                    <div className="mt-2 pt-2 border-t border-slate-700/60">
-                                                        <p className="text-[10px] font-bold text-purple-400 mb-1">⚡ 급등 전 시그널</p>
-                                                        {ps!.dryup_recovery.detected && (
-                                                            <div className="text-purple-300 text-[10px]">
-                                                                📊 거래량 건조 회복 ({ps!.dryup_recovery.dryup_days}일 건조
-                                                                {ps!.dryup_recovery.extreme_dryup ? ' · 극단' : ''} → ×{ps!.dryup_recovery.vol_ratio_at_recovery})
-                                                            </div>
-                                                        )}
-                                                        {ps!.seoryuk.detected && (
-                                                            <div className="text-red-300 text-[10px]">
-                                                                🔥 세력 매집 의심 (폭발 ×{ps!.seoryuk.spike_ratio} · 최저 ×{ps!.seoryuk.dryup_min_ratio})
-                                                            </div>
-                                                        )}
-                                                        {ps!.tight_consol.detected && (
-                                                            <div className="text-cyan-300 text-[10px]">
-                                                                🗜️ 에너지 압축 {ps!.tight_consol.range_pct}% 횡보
-                                                                {ps!.tight_consol.vol_trend === 'shrinking' ? ' · 거래량 수축' : ''}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })()}
-
+                                {centerCardsContent}
                             </div>
                         </div>
                     </>
                 )}
             </main>
 
-            {/* RIGHT PANEL: Info Cards — mobile col2 row1, desktop col3 */}
-            <aside className="min-w-0 overflow-y-auto overflow-x-hidden space-y-2 md:space-y-3 col-start-2 row-start-1 md:col-start-3">
-                {stockCode && !loading && !error && (
-                    <>
-                        {/* Score Card */}
-                        <div className="bg-surface rounded-xl border border-slate-700 p-2.5 md:p-4">
-                            <h3 className="text-xs md:text-sm font-bold text-slate-300 mb-2 md:mb-3">종합 점수</h3>
-                            <div className="text-center mb-2 md:mb-4">
-                                <div className="text-2xl md:text-4xl font-bold text-primary mb-0.5 md:mb-1">
-                                    {scoreProps.total.toFixed(0)}
-                                </div>
-                                <div className="text-xs text-slate-400">/ 100점</div>
-                            </div>
-                            <div className="space-y-1.5 md:space-y-2 text-xs md:text-sm">
-                                <div className="flex justify-between items-center">
-                                    <span className="text-slate-400">가치</span>
-                                    <div className="flex items-center gap-1 md:gap-2">
-                                        <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full bg-green-500"
-                                                style={{ width: `${(scoreProps.value / 40) * 100}%` }}
-                                            />
-                                        </div>
-                                        <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
-                                            {scoreProps.value.toFixed(0)}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div className="flex justify-between items-center">
-                                    <span className="text-slate-400">추세</span>
-                                    <div className="flex items-center gap-1 md:gap-2">
-                                        <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full bg-blue-500"
-                                                style={{ width: `${(scoreProps.trend / 30) * 100}%` }}
-                                            />
-                                        </div>
-                                        <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
-                                            {scoreProps.trend.toFixed(0)}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div className="flex justify-between items-center">
-                                    <span className="text-slate-400">안정성</span>
-                                    <div className="flex items-center gap-1 md:gap-2">
-                                        <div className="w-10 md:w-20 h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full bg-purple-500"
-                                                style={{ width: `${(scoreProps.stability / 20) * 100}%` }}
-                                            />
-                                        </div>
-                                        <span className="font-mono text-slate-300 w-5 md:w-8 text-right text-xs">
-                                            {scoreProps.stability.toFixed(0)}
-                                        </span>
-                                    </div>
-                                </div>
-                                {scoreProps.risk > 0 && (
-                                    <div className="flex justify-between items-center pt-1.5 border-t border-slate-700">
-                                        <span className="text-red-400">리스크</span>
-                                        <span className="font-mono text-red-400">-{scoreProps.risk.toFixed(0)}</span>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Risk Warnings */}
-                        {warnings.length > 0 && (
-                            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
-                                <h3 className="text-sm font-bold text-red-400 mb-2">⚠️ 리스크 경고</h3>
-                                <ul className="space-y-1">
-                                    {warnings.map((warning, idx) => (
-                                        <li key={idx} className="text-xs text-red-300 flex items-start gap-1">
-                                            <span className="text-red-400 mt-0.5">•</span>
-                                            <span>{warning}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
-
-                        {/* Cup & Handle Pattern — show when loading or pattern found */}
-                        {(cupHandleLoading || cupHandle) && (
-                            <div className={`rounded-xl border p-4 ${cupHandle?.breakout_status === 'fresh' ? 'bg-purple-900/20 border-purple-600/60' :
-                                    cupHandle?.breakout_status === 'pre' ? 'bg-orange-900/20 border-orange-600/60' :
-                                        'bg-surface border-slate-700'
-                                }`}>
-                                <h3 className="text-sm font-bold text-slate-300 mb-3">☕ 컵앤핸들 패턴</h3>
-                                {cupHandleLoading ? (
-                                    <p className="text-xs text-slate-500">분석 중...</p>
-                                ) : cupHandle ? (
-                                    <>
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${cupHandle.breakout_status === 'fresh' ? 'bg-purple-600 text-white' :
-                                                    cupHandle.breakout_status === 'pre' ? 'bg-orange-500 text-white' :
-                                                        cupHandle.breakout_status === 'expired' ? 'bg-slate-600 text-slate-300' :
-                                                            'bg-slate-700 text-slate-400'
-                                                }`}>
-                                                {cupHandle.breakout_status === 'fresh' ? '돌파 확인' :
-                                                    cupHandle.breakout_status === 'pre' ? '돌파 임박' :
-                                                        cupHandle.breakout_status === 'expired' ? '기회 소멸' : '형성 중'}
-                                            </span>
-                                            <span className="text-sm font-bold text-slate-300">{cupHandle.score}점</span>
-                                        </div>
-                                        <ul className="space-y-1">
-                                            {cupHandle.reasons.map((r, i) => (
-                                                <li key={i} className={`text-xs flex items-start gap-1 ${cupHandle.breakout_status === 'expired' ? 'text-slate-500' : 'text-slate-300'
-                                                    }`}>
-                                                    <span className="mt-0.5 shrink-0">◆</span>
-                                                    <span>{r}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </>
-                                ) : (
-                                    <p className="text-xs text-slate-500">패턴 없음</p>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Fundamental Data */}
-                        <div className="bg-surface rounded-xl border border-slate-700 p-4">
-                            <h3 className="text-sm font-bold text-slate-300 mb-3">📊 펀더멘털</h3>
-                            {fundamental ? (
-                                <div className="space-y-2 text-sm">
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">PER</span>
-                                        <span className={`font-mono ${(fundamental.per ?? 0) < 20 ? 'text-green-400' :
-                                                (fundamental.per ?? 0) > 50 ? 'text-red-400' : 'text-slate-300'
-                                            }`}>
-                                            {fundamental.per != null ? fundamental.per.toFixed(1) : '-'}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">PBR</span>
-                                        <span className={`font-mono ${(fundamental.pbr ?? 0) < 1.5 ? 'text-green-400' : 'text-slate-300'
-                                            }`}>
-                                            {fundamental.pbr != null ? fundamental.pbr.toFixed(2) : '-'}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">ROE</span>
-                                        <span className={`font-mono ${(fundamental.roe ?? 0) > 10 ? 'text-green-400' : 'text-slate-300'
-                                            }`}>
-                                            {fundamental.roe != null ? `${fundamental.roe.toFixed(1)}%` : '-'}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">EPS</span>
-                                        <span className={`font-mono ${(fundamental.eps ?? 0) > 0 ? 'text-slate-300' : 'text-red-400'
-                                            }`}>
-                                            {fundamental.eps != null ? `${market === 'US' ? '$' : ''}${fundamental.eps.toLocaleString()}` : '-'}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">BPS</span>
-                                        <span className="font-mono text-slate-300">
-                                            {fundamental.bps != null ? `${market === 'US' ? '$' : ''}${fundamental.bps.toLocaleString()}` : '-'}
-                                        </span>
-                                    </div>
-                                </div>
-                            ) : (
-                                <p className="text-slate-500 text-xs">데이터 없음</p>
-                            )}
-                        </div>
-
-                        {/* Technical Indicators */}
-                        <div className="bg-surface rounded-xl border border-slate-700 p-4">
-                            <h3 className="text-sm font-bold text-slate-300 mb-3">📈 기술적 지표</h3>
-                            {technical ? (
-                                <div className="space-y-2 text-sm">
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">RSI(14)</span>
-                                        <span className={`font-mono ${(technical.rsi ?? 50) > 70 ? 'text-red-400' :
-                                                (technical.rsi ?? 50) < 30 ? 'text-blue-400' : 'text-slate-300'
-                                            }`}>
-                                            {technical.rsi != null ? technical.rsi.toFixed(1) : '-'}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">MA20</span>
-                                        <span className="font-mono text-slate-300">
-                                            {technical.ma20?.toLocaleString() ?? '-'}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">MA60</span>
-                                        <span className="font-mono text-slate-300">
-                                            {technical.ma60?.toLocaleString() ?? '-'}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">변동성</span>
-                                        <span className="font-mono text-slate-300">
-                                            {technical.volatility != null ? `${(technical.volatility * 100).toFixed(2)}%` : '-'}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">60일 수익률</span>
-                                        <span className={`font-mono ${(technical.return_60d ?? 0) > 0 ? 'text-red-400' : 'text-blue-400'
-                                            }`}>
-                                            {technical.return_60d != null
-                                                ? `${technical.return_60d > 0 ? '+' : ''}${technical.return_60d.toFixed(1)}%`
-                                                : '-'}
-                                        </span>
-                                    </div>
-                                </div>
-                            ) : (
-                                <p className="text-slate-500 text-xs">데이터 없음</p>
-                            )}
-                        </div>
-                    </>
-                )}
+            {/* RIGHT: 종합점수 + 리스크 + C&H + 펀더멘털 + 기술적지표 */}
+            <aside className="min-w-0 overflow-y-auto overflow-x-hidden space-y-3">
+                {rightCardsContent}
             </aside>
         </div>
     );
